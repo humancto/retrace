@@ -6,6 +6,34 @@ All notable changes to Retrace are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-14
+
+### Added
+- A new search UI (`ui/index.html`, still one file with no build step): a command bar with
+  recent queries and deep links (the query and the filters live in the URL hash), a timeline
+  with tracklet density for each camera that you can drag to select a time range, result cards
+  that scrub through their crops on hover, keyboard navigation (`/`, `j`, `k`, `Enter`, `p`,
+  `Esc`), a slide-in detail panel with the clip, the path, the crops, "more like this", a clip
+  download and a copy-link action, a **case** panel that keeps pinned results in the browser
+  and exports them as JSON, audio results inline, and error toasts for every API error.
+- A stall watchdog for live sources: when no frame arrives for 30 s, Retrace kills ffmpeg
+  (SIGTERM, then SIGKILL) and restarts the source, which also resolves a YouTube URL again.
+- HTTP inputs get `-rw_timeout 20 s`; YouTube media requests carry the User-Agent that yt-dlp
+  used.
+- `/ste`: the docs follow ASD-STE100 Simplified Technical English, checked by a bundled script.
+
+### Changed
+- README, CONTRIBUTING, SECURITY, the landing page and the issue templates are rewritten in
+  Simplified Technical English with measured numbers only.
+- `crates/llama-embed/build.rs` finds `cmake`, `git` and `ninja` in the usual package-manager
+  directories when they are not on `PATH`, and links the llama.cpp archives whole and unbundled.
+
+### Known limitation
+- YouTube Live: without a proof-of-origin token provider for yt-dlp, YouTube serves about 30 s
+  of segments and then answers 403. Retrace restarts the source each time (about one restart
+  per minute). RTSP, HLS from your own cameras, SRT and files are not affected.
+
+
 ## [0.3.0] — 2026-10-13
 
 First public release.
@@ -52,5 +80,6 @@ First public release.
 - The UI requested a favicon that did not exist (one console error per page load).
 - Clippy clean-up across the crate (collapsed `if`s, needless borrows, `is_multiple_of`).
 
-[Unreleased]: https://github.com/humancto/retrace/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/humancto/retrace/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/humancto/retrace/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/humancto/retrace/releases/tag/v0.3.0
