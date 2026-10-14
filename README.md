@@ -78,8 +78,9 @@ Every number below comes from `scripts/e2e.sh` and `retrace eval` on `vtest.avi`
 | Eval, 7 queries, k=5 | **recall@5 0.95 · mAP 0.95** | — |
 
 The golden set is [`eval/golden.vtest.json`](eval/golden.vtest.json). Every hit was checked by eye
-against the crop, and tracklet ids are reproducible run to run (tracks are persisted in id order), so
-the set stays valid. It is deliberately small. The miss is "a white van": three white vans are in the
+against the crop, and tracklet ids are reproducible run to run on one machine (tracks are persisted in
+id order). A different ffmpeg or onnxruntime build can detect one track more or fewer, which shifts
+the ids; `scripts/e2e.sh` then prints the eval without asserting the recall floor. It is deliberately small. The miss is "a white van": three white vans are in the
 footage, one of them was detected as `car`, and the query's inferred class filter (`truck`) hides it.
 Vehicle class votes on low-resolution crops are the weak spot; `--conf` and the caption path help.
 

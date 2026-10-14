@@ -81,13 +81,22 @@ rule = json.load(urllib.request.urlopen(req, timeout=60))
 print(f"  rule backtest: {rule['backtest']['matches']} matches")
 EOF
 
+# The golden set is keyed by tracklet id. Ids are reproducible on one machine, but a different
+# ffmpeg / onnxruntime build can detect one track more or fewer, which shifts every id after it.
+# The golden run produced GOLDEN_TRACKLETS; when this run differs, the eval is printed but the
+# recall floor is not asserted (the ids are simply not comparable).
+GOLDEN_TRACKLETS=${GOLDEN_TRACKLETS:-35}
 if [ -f eval/golden.vtest.json ] && [ "${VIDEO##*/}" = "vtest.avi" ]; then
   echo "▸ eval (recall@5 on eval/golden.vtest.json)"
   "$BIN" --embedder "$EMB" --db "$TMP/index.db" --crops "$TMP/crops" \
     eval --golden eval/golden.vtest.json --k 5 2>/dev/null | tee "$TMP/eval.txt" | sed 's/^/  /'
-  REC=$(grep -o 'recall@5=[0-9.]*' "$TMP/eval.txt" | tail -1 | cut -d= -f2)
-  python3 -c "import sys; r=float(sys.argv[1]); sys.exit(0 if r >= 0.5 else 1)" "$REC" \
-    || { echo "FAIL: recall@5=$REC below 0.5"; exit 1; }
+  if [ "$TRACKLETS" -ne "$GOLDEN_TRACKLETS" ]; then
+    echo "  note: this platform produced $TRACKLETS tracklets, the golden run $GOLDEN_TRACKLETS; ids differ, recall floor not asserted"
+  else
+    REC=$(grep -o 'recall@5=[0-9.]*' "$TMP/eval.txt" | tail -1 | cut -d= -f2)
+    python3 -c "import sys; r=float(sys.argv[1]); sys.exit(0 if r >= 0.5 else 1)" "$REC" \
+      || { echo "FAIL: recall@5=$REC below 0.5"; exit 1; }
+  fi
 fi
 
 echo "✓ e2e passed"
