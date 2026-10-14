@@ -161,8 +161,7 @@ pub fn prepare_source(source: &str, cache_dir: &Path) -> Result<String> {
     let path = String::from_utf8_lossy(&out.stdout)
         .lines()
         .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .next_back()
+        .rfind(|l| !l.is_empty())
         .map(str::to_string)
         .unwrap_or_default();
     anyhow::ensure!(

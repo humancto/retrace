@@ -87,8 +87,10 @@ pub fn wav_to_f32(wav: &[u8]) -> Result<(u32, Vec<f32>)> {
         if id == b"data" {
             let end = (i + 8 + len).min(wav.len());
             let pcm = wav[i + 8..end]
-                .chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|b| i16::from_le_bytes(*b) as f32 / 32768.0)
                 .collect();
             return Ok((rate, pcm));
         }
@@ -181,8 +183,10 @@ pub fn run_audio(
             opts.t_start
         });
         let pcm: Vec<i16> = chunk[..got]
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| i16::from_le_bytes(*b))
             .collect();
         samples_total += pcm.len();
         ring.extend_from_slice(&pcm);
