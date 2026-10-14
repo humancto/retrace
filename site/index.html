@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retrace — ask your cameras what happened</title>
+<meta name="description" content="Retrace is a fully local video investigator. It turns camera footage into searchable tracklets, answers questions like 'a person in a red jacket' with playable clips, and never sends a byte to the cloud. Open source, MIT.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0f14">
+<meta property="og:title" content="Retrace — ask your cameras what happened">
+<meta property="og:description" content="A fully local video investigator. Natural-language search over your own footage, rules that fire while the person is still in frame, nothing leaves the machine.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="assets/search-red-jacket.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%230e1319%27/%3E%3Cpath d=%27M7 23 Q12 9 17 16 T26 9%27 fill=%27none%27 stroke=%27%233fc1b9%27 stroke-width=%273%27 stroke-linecap=%27round%27/%3E%3Ccircle cx=%2726%27 cy=%279%27 r=%273%27 fill=%27%23e06b69%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#0b0f14;        /* monitor black */
+  --panel:#111820;      /* bezel */
+  --line:#223040;       /* hairline on the panel */
+  --bone:#ece7dc;       /* warm off-white text: paper, not LCD */
+  --slate:#8d99a6;      /* muted labels */
+  --teal:#3fc1b9;       /* phosphor: the trail, the accent, the product's own colour */
+  --red:#e06b69;        /* where the track ended */
+  --green:#5fc08a;      /* where it began */
+  --chalk:#f2d56b;      /* ID labels, like a grease pencil on a contact sheet */
+  --display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --serif:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --maxw:1180px;
+  --gutter:clamp(16px,4vw,48px);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--ink);color:var(--bone);font:17px/1.6 var(--serif);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+a{color:var(--teal);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--chalk);outline-offset:3px}
+img{max-width:100%;display:block}
+h1,h2,h3{font-family:var(--display);font-variation-settings:"wdth" 80,"opsz" 96;letter-spacing:-.01em;line-height:1;margin:0;font-weight:800}
+.osd{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--slate)}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 var(--gutter)}
+
+/* top OSD strip: the page reads like a monitor */
+.strip{position:sticky;top:0;z-index:5;background:rgba(11,15,20,.86);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.strip .wrap{display:flex;align-items:center;gap:20px;height:48px}
+.strip .brand{font-family:var(--display);font-weight:800;font-variation-settings:"wdth" 80;font-size:18px;letter-spacing:.06em;color:var(--bone)}
+.strip .brand i{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--red);margin-right:9px;vertical-align:1px;animation:rec 1.6s steps(1) infinite}
+@keyframes rec{50%{opacity:.2}}
+.strip nav{margin-left:auto;display:flex;gap:18px;white-space:nowrap}
+.strip nav a{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--slate)}
+.strip nav a:hover{color:var(--bone);text-decoration:none}
+.strip nav a.sm{display:none}
+.strip .clock{display:none}
+@media(min-width:760px){.strip .clock{display:inline;margin-left:14px}.strip nav a.sm{display:inline}}
+
+/* hero */
+.hero{padding:clamp(40px,8vw,96px) 0 clamp(32px,6vw,72px)}
+.hero .wrap{display:grid;grid-template-columns:1fr;gap:40px;align-items:center}
+@media(min-width:960px){.hero .wrap{grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:56px}}
+.hero .eyebrow{margin-bottom:22px;color:var(--teal)}
+.hero h1{font-size:clamp(44px,7.2vw,92px)}
+.hero h1 .q{display:block;color:var(--slate);font-weight:600;font-variation-settings:"wdth" 85,"opsz" 96}
+.hero p.lede{font-size:clamp(18px,1.6vw,21px);max-width:46ch;margin:26px 0 0;color:#cfc9bd}
+.ask{margin-top:30px;border:1px solid var(--line);background:var(--panel);border-radius:6px;display:flex;align-items:center;gap:12px;padding:12px 14px;font-family:var(--mono);font-size:15px;min-height:52px}
+.ask .prompt{color:var(--teal)}
+.ask .typed{color:var(--bone);white-space:nowrap;overflow:hidden}
+.ask .caret{width:9px;height:19px;background:var(--teal);animation:rec 1s steps(1) infinite}
+.ask .ms{margin-left:auto;color:var(--slate);font-size:12px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:26px}
+.btn{font-family:var(--display);font-weight:700;font-variation-settings:"wdth" 90;font-size:16px;letter-spacing:.01em;padding:13px 20px;border-radius:5px;border:1px solid transparent;display:inline-flex;align-items:center;gap:10px}
+.btn.primary{background:var(--teal);color:#06302e}
+.btn.primary:hover{background:#5ad4cc;text-decoration:none}
+.btn.ghost{border-color:var(--line);color:var(--bone);background:transparent}
+.btn.ghost:hover{border-color:var(--slate);text-decoration:none}
+.btn code{font-family:var(--mono);font-weight:500;font-size:14px}
+
+/* the frame: a real context frame with the real trajectory of tracklet 21 */
+.frame{position:relative;border:1px solid var(--line);background:#000;border-radius:8px;overflow:hidden;box-shadow:0 30px 80px -30px rgba(0,0,0,.9)}
+.frame img{width:100%;height:auto;aspect-ratio:4/3;object-fit:cover}
+.frame svg{position:absolute;inset:0;width:100%;height:100%}
+.frame .trail{fill:none;stroke:var(--teal);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1200;stroke-dashoffset:1200;animation:draw 2.8s cubic-bezier(.4,0,.2,1) .6s forwards;filter:drop-shadow(0 0 3px rgba(63,193,185,.6))}
+@keyframes draw{to{stroke-dashoffset:0}}
+.frame .dot{opacity:0;animation:pop .3s ease-out forwards}
+.frame .dot.in{animation-delay:.5s}
+.frame .dot.out{animation-delay:3.4s}
+@keyframes pop{to{opacity:1}}
+.frame .box{fill:none;stroke:var(--teal);stroke-width:1.6;opacity:0;animation:pop .3s ease-out 3.4s forwards}
+.frame .hud{position:absolute;left:0;right:0;top:0;display:flex;justify-content:space-between;padding:10px 12px;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#d8dfe6;text-shadow:0 1px 2px #000}
+.frame .hud b{color:var(--chalk);font-weight:500}
+.frame .tag{position:absolute;right:12px;bottom:12px;background:rgba(11,15,20,.82);border:1px solid var(--line);border-radius:4px;padding:8px 10px;font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--bone);display:grid;grid-template-columns:auto auto;gap:3px 12px;opacity:0;animation:pop .4s ease-out 3.7s forwards}
+.frame .tag span{color:var(--slate)}
+.frame .crop{position:absolute;left:12px;bottom:12px;width:46px;height:62px;object-fit:cover;aspect-ratio:auto;border:1px solid var(--chalk);border-radius:2px;opacity:0;animation:pop .4s ease-out 3.7s forwards}
+.lane{margin-top:14px;display:grid;grid-template-columns:72px 1fr;gap:10px;align-items:center}
+.lane .bar{position:relative;height:12px;background:var(--panel);border:1px solid var(--line);border-radius:2px}
+.lane .bar i{position:absolute;top:2px;height:6px;background:var(--teal);opacity:.55;border-radius:1px}
+.lane .bar i.v{background:var(--chalk)}
+.lane .bar i.hit{opacity:1;box-shadow:0 0 0 1px #fff}
+.lane .axis{grid-column:2;display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--slate)}
+
+/* sections */
+section{padding:clamp(48px,7vw,96px) 0;border-top:1px solid var(--line)}
+.sec-head{display:grid;grid-template-columns:1fr;gap:10px 40px;margin-bottom:36px}
+@media(min-width:760px){.sec-head{grid-template-columns:220px 1fr;align-items:end}}
+.sec-head h2{font-size:clamp(30px,4vw,48px)}
+.sec-head p{margin:0;max-width:60ch;color:#cfc9bd}
+
+/* evidence: contact-sheet gallery */
+.sheet{display:grid;grid-template-columns:1fr;gap:22px}
+@media(min-width:760px){.sheet{grid-template-columns:1fr 1fr}}
+.exhibit{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.exhibit img{width:100%;height:auto;aspect-ratio:16/10;object-fit:cover;object-position:top;border-bottom:1px solid var(--line)}
+.exhibit figcaption{padding:14px 16px 16px;font-size:15.5px;color:#cfc9bd}
+.exhibit figcaption b{font-family:var(--mono);font-weight:500;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--chalk);display:block;margin-bottom:6px}
+
+/* method: the pipeline as one line of monospace */
+.pipe{font-family:var(--mono);font-size:13.5px;line-height:1.9;color:#cfd6dd;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:18px 20px;overflow:auto;white-space:pre;margin:0}
+.pipe .k{color:var(--teal)}
+.pipe .m{color:var(--slate)}
+.method{display:grid;grid-template-columns:1fr;gap:28px 40px;margin-top:36px}
+@media(min-width:760px){.method{grid-template-columns:1fr 1fr 1fr}}
+.method h3{font-size:19px;font-variation-settings:"wdth" 90,"opsz" 24;margin-bottom:10px}
+.method p{margin:0;color:#cfc9bd;font-size:16px}
+
+/* numbers: a ledger, not stat tiles */
+.ledger{width:100%;border-collapse:collapse;font-size:16px}
+.ledger th,.ledger td{text-align:left;padding:14px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+.ledger th{font-family:var(--mono);font-weight:500;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--slate)}
+.ledger td.n{font-family:var(--display);font-weight:700;font-variation-settings:"wdth" 90;font-size:26px;letter-spacing:-.01em;color:var(--bone);white-space:nowrap}
+.ledger td.n small{font-family:var(--mono);font-weight:400;font-size:12px;color:var(--slate);letter-spacing:.04em;margin-left:6px}
+.ledger tr:last-child td{border-bottom:0}
+.fine{font-size:14.5px;color:var(--slate);margin:18px 0 0}
+
+/* get started */
+.code{font-family:var(--mono);font-size:14px;line-height:1.75;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:18px 20px;overflow:auto;margin:0;color:#dfe5ea;white-space:pre}
+.code .c{color:var(--slate)}
+.code .p{color:var(--teal);user-select:none}
+.why{display:grid;grid-template-columns:1fr;gap:28px 40px;margin-top:36px}
+@media(min-width:760px){.why{grid-template-columns:1fr 1fr 1fr}}
+.why h3{font-size:19px;font-variation-settings:"wdth" 90,"opsz" 24;margin-bottom:10px}
+.why p{margin:0;color:#cfc9bd;font-size:16px}
+
+footer{border-top:1px solid var(--line);padding:36px 0 48px;color:var(--slate);font-size:14.5px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center}
+footer .brand{font-family:var(--display);font-weight:800;font-variation-settings:"wdth" 80;letter-spacing:.06em;color:var(--bone)}
+footer nav{margin-left:auto;display:flex;flex-wrap:wrap;gap:18px}
+
+@media (prefers-reduced-motion:reduce){
+  .strip .brand i,.ask .caret{animation:none}
+  .frame .trail{animation:none;stroke-dashoffset:0}
+  .frame .dot,.frame .box,.frame .tag,.frame .crop{animation:none;opacity:1}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+<div class="strip">
+  <div class="wrap">
+    <span class="brand"><i aria-hidden="true"></i>RETRACE</span>
+    <span class="osd clock" id="clock" aria-hidden="true">CAM 01 · COURTYARD</span>
+    <nav aria-label="Page">
+      <a class="sm" href="#evidence">Evidence</a>
+      <a class="sm" href="#method">Method</a>
+      <a class="sm" href="#numbers">Numbers</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/humancto/retrace">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <p class="osd eyebrow">A fully local video investigator · open source · MIT</p>
+      <h1>Ask your cameras what happened.<span class="q">Then retrace their steps.</span></h1>
+      <p class="lede">Retrace turns footage into one record per person or vehicle per visit, indexes it on your own disk, and answers plain-English questions with playable clips. Pull the network cable. It still works.</p>
+      <div class="ask" role="img" aria-label="A search box cycling through example questions">
+        <span class="prompt">›</span>
+        <span class="typed" id="typed">a person in a red jacket</span>
+        <span class="caret" aria-hidden="true"></span>
+        <span class="ms">14 ms</span>
+      </div>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/humancto/retrace">Get the code</a>
+        <a class="btn ghost" href="#start">Run the demo <code>scripts/e2e.sh</code></a>
+      </div>
+    </div>
+
+    <div>
+      <figure class="frame" style="margin:0">
+        <img src="assets/frame-21.jpg" width="480" height="360" alt="A courtyard seen from a fixed camera. A teal line traces the path of one person across the frame from right to left." fetchpriority="high">
+        <svg viewBox="0 0 480 360" aria-hidden="true">
+          <polyline class="trail" points="464.2,206.6 446.5,202.9 421.9,198.4 403.4,194.2 382.1,188.4 368.8,184.5 351.0,177.8 336.3,172.6 319.8,167.8 301.0,163.0 285.9,158.5 252.2,150.2 239.2,147.8 222.7,144.2 206.2,142.7 190.0,140.8 177.2,140.0 166.4,137.5 153.3,134.7 142.0,132.7 130.8,130.6 120.7,129.0 110.4,127.4 101.9,126.4 89.2,124.8 77.0,124.7 64.2,125.7 48.7,128.3 31.9,130.1 15.9,132.1 7.3,133.0"/>
+          <rect class="box" x="409" y="167" width="25.4" height="63.7" rx="1"/>
+          <circle class="dot in" cx="464.2" cy="206.6" r="4.5" fill="#5fc08a"/>
+          <circle class="dot out" cx="7.3" cy="133.0" r="4.5" fill="#e06b69"/>
+        </svg>
+        <div class="hud"><span>● REC · CAM 01 COURTYARD</span><span><b>ID 21</b> · PERSON</span></div>
+        <img class="crop" src="assets/crop-21.jpg" width="46" height="62" alt="">
+        <div class="tag" aria-hidden="true">
+          <span>dwell</span><div>15.5 s · 61 frames</div>
+          <span>path</span><div>in right · out left</div>
+          <span>score</span><div>0.157 for "red jacket"</div>
+        </div>
+      </figure>
+      <div class="lane" aria-hidden="true">
+        <span class="osd">courtyard</span>
+        <div class="bar">
+          <i style="left:0%;width:100%;opacity:.18"></i>
+          <i style="left:2%;width:18%"></i><i style="left:6%;width:44%"></i><i style="left:12%;width:21%"></i>
+          <i class="v" style="left:0%;width:99%;opacity:.25"></i>
+          <i style="left:30%;width:10%"></i><i style="left:38%;width:30%"></i><i style="left:52%;width:13%"></i>
+          <i class="hit" style="left:53%;width:19.5%"></i>
+          <i style="left:64%;width:24%"></i><i style="left:76%;width:9%"></i><i style="left:88%;width:11%"></i>
+        </div>
+        <div class="axis"><span>19:21:14</span><span>35 tracklets · 79 s</span><span>19:22:33</span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="evidence">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Evidence</h2>
+      <p>Four screens from one indexed video: OpenCV's public <code style="font-family:var(--mono);font-size:.9em">vtest.avi</code>, eighty seconds of a courtyard and about ten people. Nothing staged, nothing cropped out.</p>
+    </div>
+    <div class="sheet">
+      <figure class="exhibit" style="margin:0">
+        <img src="assets/search-red-jacket.jpg" loading="lazy" width="1440" height="900" alt="Search results for 'a person in a red jacket': five cards, the two red jackets ranked first.">
+        <figcaption><b>Search</b>The question becomes a filtered exact nearest-neighbour search with a threshold set per query. The two people actually wearing red come first. The Plan drawer shows the rewrite, the filters and the threshold.</figcaption>
+      </figure>
+      <figure class="exhibit" style="margin:0">
+        <img src="assets/tracklet-detail.jpg" loading="lazy" width="1440" height="900" alt="A tracklet opened: the clip plays, the path is drawn over the context frame.">
+        <figcaption><b>Retrace</b>Open a hit and the clip plays from four seconds before the visit. The trajectory is drawn over the frame: green where it began, red where it left. Dwell, entry and exit edge, speed, three best crops.</figcaption>
+      </figure>
+      <figure class="exhibit" style="margin:0">
+        <img src="assets/more-like-this.jpg" loading="lazy" width="1440" height="900" alt="More like this: nine crops similar to the opened tracklet.">
+        <figcaption><b>More like this</b>Crop similarity links the same person's other visits, including fragments the tracker split. Useful when someone comes back an hour later.</figcaption>
+      </figure>
+      <figure class="exhibit" style="margin:0">
+        <img src="assets/rules-backtest.jpg" loading="lazy" width="1440" height="900" alt="A standing rule added with its backtest: three matches on the indexed footage.">
+        <figcaption><b>Rules</b>A rule is a question that keeps being asked. Add it and the backtest says how often it would have fired on what is already indexed. New matches raise an alert while the person is still in frame.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="method">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Method</h2>
+      <p>The same hybrid recipe the cloud camera vendors run, collapsed onto one laptop with open weights: detect sparsely, track, embed the best crops, index them, search exactly.</p>
+    </div>
+<pre class="pipe"><span class="m">camera · file · RTSP · HLS · YouTube Live</span>
+   <span class="m">└─</span> ffmpeg <span class="m">(4 fps, 640 px)</span>
+       <span class="m">└─</span> <span class="k">DEIM-D-FINE</span> detector <span class="m">(ONNX, Apache-2.0)</span>
+           <span class="m">└─</span> sparse-fps tracker <span class="m">→ one tracklet per visit: path, dwell, entry/exit edge, direction</span>
+               <span class="m">├─</span> best 3 crops + context frame <span class="m">→</span> <span class="k">SigLIP 2</span> / CLIP / <span class="k">EmbeddingGemma 2</span> <span class="m">→</span> sqlite-vec
+               <span class="m">├─</span> <span class="m">(optional)</span> local VLM caption <span class="m">→</span> FTS5 <span class="m">→ fused with the vectors by reciprocal rank</span>
+               <span class="m">└─</span> rules evaluate here, while the track is still open
+
+<span class="m">question</span> <span class="m">→</span> rewrite <span class="m">→</span> text tower <span class="m">→</span> filtered exact KNN <span class="m">→</span> threshold per query <span class="m">→</span> clip cut from the recording</pre>
+    <div class="method">
+      <div>
+        <h3>Sparse on purpose</h3>
+        <p>Four frames a second is enough to know who came, where they went and how long they stayed. Between two frames a walking person moves most of a box width, so the tracker predicts with constant velocity, gates on IoU or centre distance, and confirms after two hits. On real footage that turned 136 fragments into 35 visits.</p>
+      </div>
+      <div>
+        <h3>One file, exact search</h3>
+        <p>Tracklets, vectors and captions live in a single SQLite database with <code style="font-family:var(--mono);font-size:.9em">sqlite-vec</code> and FTS5. Search is an exact cosine scan over the filtered candidates, then a threshold set from the score distribution of that query, so "a bicycle" returns one hit and "a person" returns thirty.</p>
+      </div>
+      <div>
+        <h3>Sight, sound and words</h3>
+        <p>With EmbeddingGemma 2, text, images and ten-second audio windows share one space. "Glass breaking" and "a white van" are the same kind of query, answered from the same index, in a hundred languages, with no fixed list of classes.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="numbers">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Numbers</h2>
+      <p>Measured on 13 October 2026 with <code style="font-family:var(--mono);font-size:.9em">scripts/e2e.sh</code> and <code style="font-family:var(--mono);font-size:.9em">retrace eval</code> on an Apple M4 Max, CPU execution provider, SigLIP 2 B/16 at 256 px. The golden set is in the repository; every hit was checked by eye.</p>
+    </div>
+    <table class="ledger">
+      <thead><tr><th scope="col">What</th><th scope="col">Result</th><th scope="col">Note</th></tr></thead>
+      <tbody>
+        <tr><td>Analysis of 79 s of video</td><td class="n">33 s<small>2.4× real time</small></td><td>318 frames at 4 fps, 3,121 detections, 35 tracklets</td></tr>
+        <tr><td>Search, end to end</td><td class="n">14 ms<small>p50 · p95 16 ms</small></td><td>embed the question, exact KNN, threshold, JSON out</td></tr>
+        <tr><td>Recall at 5, seven queries</td><td class="n">0.95<small>mAP 0.95</small></td><td>the one miss is a white van the detector called a car; every hit in the golden set was checked by eye</td></tr>
+        <tr><td>Bytes sent to a cloud</td><td class="n">0</td><td>model weights download once; after that the cable can come out</td></tr>
+      </tbody>
+    </table>
+    <p class="fine">A two-core Linux container answers the same searches in 50–65 ms and keeps up with four cameras by analysing every fourth to sixth frame. Backpressure skips frames; it never queues them.</p>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>Get started</h2>
+      <p>One binary, one database file, one HTML page. The first build compiles the ONNX runtime bindings and takes a few minutes; the first run downloads the open weights once.</p>
+    </div>
+<pre class="code"><span class="c"># macOS (Apple Silicon) or Linux · Rust 1.88+ · ffmpeg</span>
+<span class="p">$ </span>brew install ffmpeg rust
+<span class="p">$ </span>git clone https://github.com/humancto/retrace && cd retrace
+<span class="p">$ </span>cargo build --release
+<span class="p">$ </span>scripts/e2e.sh                 <span class="c"># public sample video → index → search → clip → eval</span>
+
+<span class="c"># your own footage</span>
+<span class="p">$ </span>./target/release/retrace --embedder siglip2-b16-256 ingest --source ~/Movies/driveway.mp4 --cam driveway
+<span class="p">$ </span>./target/release/retrace --embedder siglip2-b16-256 serve
+<span class="p">$ </span>open http://127.0.0.1:8080/
+
+<span class="c"># live cameras, while serving</span>
+<span class="p">$ </span>./target/release/retrace --embedder siglip2-b16-256 serve --source door=rtsp://user:pass@192.168.1.40:554/stream</pre>
+    <div class="why">
+      <div>
+        <h3>Nothing leaves the machine</h3>
+        <p>No accounts, no telemetry, no update checks. The only outbound calls are the one-time weight downloads and the sources you point it at. Use <code style="font-family:var(--mono);font-size:.9em">--models-dir</code> on an air-gapped box.</p>
+      </div>
+      <div>
+        <h3>Open weights, open code</h3>
+        <p>DEIM / D-FINE, CLIP, SigLIP 2 and EmbeddingGemma 2 are Apache-2.0 or MIT. Retrace itself is MIT. Swap the detector or the embedder with a flag.</p>
+      </div>
+      <div>
+        <h3>Everything is an API call</h3>
+        <p>Search, tracklets, clips, thumbnails, rules, alerts, events and a live SSE feed are plain JSON over localhost. The UI is one HTML file that uses nothing the API does not expose.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="brand">RETRACE</span>
+    <span>MIT license · v0.3.0</span>
+    <nav aria-label="Links">
+      <a href="https://github.com/humancto/retrace">Source</a>
+      <a href="https://github.com/humancto/retrace#readme">README</a>
+      <a href="https://github.com/humancto/retrace/blob/main/SECURITY.md">Security</a>
+      <a href="https://github.com/humancto/retrace/blob/main/CONTRIBUTING.md">Contribute</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var el=document.getElementById('typed'); if(!el||reduce) return;
+  var qs=['a person in a red jacket','two people walking together','a white van','someone loitering by the door for 45 s','a dog barking','person carrying a box, entered from the left'];
+  var i=0,j=qs[0].length,del=false;
+  function step(){
+    var q=qs[i];
+    if(!del){ j++; el.textContent=q.slice(0,j); if(j>=q.length){ del=true; return setTimeout(step,2200);} return setTimeout(step,38+Math.random()*40); }
+    j--; el.textContent=q.slice(0,j); if(j<=0){ del=false; i=(i+1)%qs.length; return setTimeout(step,500);} setTimeout(step,22);
+  }
+  setTimeout(step,3600);
+  var clock=document.getElementById('clock');
+  if(clock){ function tick(){ var d=new Date(); clock.textContent='CAM 01 · COURTYARD · '+d.toTimeString().slice(0,8); } tick(); setInterval(tick,1000); }
+})();
+</script>
+</body>
+</html>
