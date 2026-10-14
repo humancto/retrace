@@ -12,9 +12,6 @@ use ffmpeg_sidecar::event::{FfmpegEvent, LogLevel};
 use image::RgbImage;
 use serde::Serialize;
 use std::collections::HashMap;
-
-/// A live source with no new frame for this long is restarted (see the stall watchdog).
-const STALL_SECS: i64 = 30;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use usls::Image;
@@ -104,7 +101,7 @@ pub fn is_youtube(source: &str) -> bool {
     s.starts_with("youtube:") || s.contains("youtube.com/") || s.contains("youtu.be/")
 }
 
-fn is_http(source: &str) -> bool {
+pub(crate) fn is_http(source: &str) -> bool {
     let s = source.to_ascii_lowercase();
     s.starts_with("http://") || s.starts_with("https://")
 }
@@ -115,25 +112,59 @@ fn is_hls(url: &str) -> bool {
 
 const YT_LIVE_FMT: &str = "best[height<=720][vcodec^=avc1]/best[height<=720]/best";
 
-/// The User-Agent that yt-dlp used when it resolved the media URL. YouTube binds its signed
-/// `googlevideo.com` URLs to the client, and a request with a different User-Agent gets HTTP 403
-/// after the first segments, so ffmpeg and ffprobe must send the same one.
-static YT_USER_AGENT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// A live source with no new frame for this long is restarted (see the stall watchdog).
+const STALL_SECS: u64 = 30;
+
+/// The User-Agent that yt-dlp used when it resolved each media URL, keyed by that URL. YouTube
+/// binds its signed `googlevideo.com` URLs to the client, and a request with a different
+/// User-Agent gets HTTP 403 after the first segments, so ffmpeg and ffprobe must send the same
+/// one. yt-dlp picks a User-Agent per process, so two cameras can have two different ones.
+static YT_USER_AGENTS: std::sync::Mutex<Option<HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
 const FALLBACK_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
 
 /// `["-user_agent", ua]` for media URLs that need yt-dlp's client identity, else empty.
 pub(crate) fn user_agent_args(url: &str) -> Vec<String> {
-    if !url.contains("googlevideo.com") && !url.contains("youtube.com") {
+    if !url.contains("googlevideo.com") {
         return Vec::new();
     }
-    let ua = YT_USER_AGENT
+    let ua = YT_USER_AGENTS
         .lock()
         .ok()
-        .and_then(|g| g.clone())
+        .and_then(|g| g.as_ref().and_then(|m| m.get(url).cloned()))
         .unwrap_or_else(|| FALLBACK_USER_AGENT.to_string());
     vec!["-user_agent".into(), ua]
 }
+
+fn remember_user_agent(url: &str, ua: &str) {
+    if let Ok(mut g) = YT_USER_AGENTS.lock() {
+        g.get_or_insert_with(HashMap::new)
+            .insert(url.to_string(), ua.to_string());
+    }
+}
+
+fn forget_user_agent(url: &str) {
+    if let Ok(mut g) = YT_USER_AGENTS.lock()
+        && let Some(m) = g.as_mut()
+    {
+        m.remove(url);
+    }
+}
 const YT_VOD_FMT: &str = "bv*[height<=720][vcodec^=avc1]/bv*[height<=720]/b[height<=720]/b";
+
+/// Kills the listed pids with SIGKILL when dropped, unless cleared first. Used for the early
+/// `?` returns in the ingest loop, where the children would otherwise outlive the function.
+struct KillOnDrop(Vec<u32>);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        for pid in self.0.drain(..) {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .status();
+        }
+    }
+}
 
 fn yt_dlp(args: &[&str]) -> Result<std::process::Output> {
     std::process::Command::new("yt-dlp")
@@ -228,10 +259,12 @@ pub fn resolve_source(source: &str) -> Result<String> {
     // first line and the User-Agent (which never starts with "http") is the last one.
     let first = lines.first().copied().unwrap_or_default().to_string();
     anyhow::ensure!(first.starts_with("http"), "yt-dlp returned no URL");
-    if let Some(ua) = lines.last().filter(|l| !l.starts_with("http"))
-        && let Ok(mut g) = YT_USER_AGENT.lock()
+    // yt-dlp prints the literal "NA" when the header is missing; keep the fallback then.
+    if let Some(ua) = lines
+        .last()
+        .filter(|l| !l.starts_with("http") && **l != "NA")
     {
-        *g = Some(ua.to_string());
+        remember_user_agent(&first, ua);
     }
     Ok(first)
 }
@@ -553,35 +586,50 @@ pub fn run_ingest(
     // nothing. ffmpeg then blocks on read, the frame loop never returns, and the restart loop in
     // `run_live_forever` never runs. When no frame arrives for STALL_SECS, kill ffmpeg: the loop
     // ends, the source is resolved again (YouTube media URLs expire), and ffmpeg restarts.
-    let last_frame_ms = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(now_ms()));
-    let watchdog_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    if live {
+    // The clock is monotonic (an `Instant` origin), so a laptop sleep or an NTP step does not
+    // fire or delay the watchdog. The main thread joins the watchdog before it reaps the child,
+    // so the pid cannot be reused by the time a SIGKILL is sent.
+    let t_origin = Instant::now();
+    let last_frame = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let (wd_tx, wd_rx) = std::sync::mpsc::channel::<()>();
+    let watchdog = if live {
         let pid = child.as_inner().id();
-        let last = last_frame_ms.clone();
-        let stop_flag = watchdog_stop.clone();
+        let last = last_frame.clone();
         let cam = opts.cam.clone();
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_secs(5));
-                if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    return;
-                }
-                let age_s = (now_ms() - last.load(std::sync::atomic::Ordering::Relaxed)) / 1000;
-                if age_s >= STALL_SECS {
-                    tracing::warn!(cam = %cam, "no frames for {age_s} s: restarting ffmpeg");
-                    // ffmpeg handles SIGTERM in its main loop, which can be blocked on the network
-                    // read here, so escalate to SIGKILL after a short grace period.
-                    let _ = std::process::Command::new("kill")
-                        .arg(pid.to_string())
-                        .status();
-                    std::thread::sleep(Duration::from_secs(3));
-                    let _ = std::process::Command::new("kill")
-                        .args(["-9", &pid.to_string()])
-                        .status();
-                    return;
-                }
-            }
-        });
+        Some(
+            std::thread::Builder::new()
+                .name(format!("stall-{cam}"))
+                .spawn(move || {
+                    use std::sync::mpsc::RecvTimeoutError::Timeout;
+                    while let Err(Timeout) = wd_rx.recv_timeout(Duration::from_secs(5)) {
+                        let now = t_origin.elapsed().as_millis() as u64;
+                        let age_s = now.saturating_sub(last.load(std::sync::atomic::Ordering::Relaxed)) / 1000;
+                        if age_s >= STALL_SECS {
+                            tracing::warn!(cam = %cam, "no frames for {age_s} s: restarting ffmpeg");
+                            // ffmpeg handles SIGTERM in its main loop, which can be blocked on the
+                            // network read here, so escalate to SIGKILL after a short grace period
+                            // unless the ingest loop has ended in the meantime.
+                            let _ = std::process::Command::new("kill")
+                                .arg(pid.to_string())
+                                .status();
+                            if let Err(Timeout) = wd_rx.recv_timeout(Duration::from_secs(3)) {
+                                let _ = std::process::Command::new("kill")
+                                    .args(["-9", &pid.to_string()])
+                                    .status();
+                            }
+                            return;
+                        }
+                    }
+                })?,
+        )
+    } else {
+        None
+    };
+    // Any `?` below returns before the normal teardown; this guard kills the children then, while
+    // their pids are still ours (unreaped), so nothing leaks and no reused pid is hit.
+    let mut guard = KillOnDrop(vec![child.as_inner().id()]);
+    if let Some(r) = recorder.as_ref() {
+        guard.0.push(r.id());
     }
 
     let mut tracker = Tracker::new(TrackerConfig {
@@ -700,7 +748,10 @@ pub fn run_ingest(
             FfmpegEvent::OutputFrame(f) => {
                 frame_idx += 1;
                 stats.frames += 1;
-                last_frame_ms.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
+                last_frame.store(
+                    t_origin.elapsed().as_millis() as u64,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 if let Some(m) = opts.max_frames
                     && frame_idx > m
                 {
@@ -969,7 +1020,12 @@ pub fn run_ingest(
             _ => {}
         }
     }
-    watchdog_stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    drop(wd_tx);
+    if let Some(h) = watchdog {
+        let _ = h.join(); // the child is still unreaped here, so its pid cannot be reused
+    }
+    guard.0.clear();
+    forget_user_agent(&url);
     let _ = child.kill();
     let _ = child.wait();
     if let Some(mut r) = recorder.take() {

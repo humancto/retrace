@@ -31,8 +31,13 @@ pub struct AudioOpts {
 
 /// True when ffprobe sees an audio stream.
 pub fn has_audio(url: &str) -> bool {
-    let out = std::process::Command::new("ffprobe")
-        .args(crate::ingest::user_agent_args(url))
+    let mut c = std::process::Command::new("ffprobe");
+    c.args(crate::ingest::user_agent_args(url));
+    if crate::ingest::is_http(url) {
+        // Fail the probe when the server sends nothing for 20 s, instead of blocking the ingest.
+        c.args(["-rw_timeout", "20000000"]);
+    }
+    let out = c
         .args([
             "-v",
             "error",

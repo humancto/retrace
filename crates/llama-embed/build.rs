@@ -98,12 +98,11 @@ fn main() {
     let cmake = tool("cmake");
     let mut cfg = Command::new(&cmake);
     cfg.arg("-S").arg(&src).arg("-B").arg(&build);
-    if Command::new(tool("ninja"))
-        .arg("--version")
-        .output()
-        .is_ok()
-    {
+    let ninja = tool("ninja");
+    if Command::new(&ninja).arg("--version").output().is_ok() {
+        // cmake searches PATH for the generator's program; name it when ninja was found elsewhere.
         cfg.args(["-G", "Ninja"]);
+        cfg.arg(format!("-DCMAKE_MAKE_PROGRAM={}", ninja.display()));
     }
     cfg.args([
         "-DCMAKE_BUILD_TYPE=Release",
@@ -123,12 +122,12 @@ fn main() {
         // Build for the Rust target's architecture, not for the architecture cmake happens to
         // run under (an x86_64 cmake under Rosetta would otherwise produce x86_64 archives,
         // which the arm64 link then reports as "undefined symbols").
-        let arch = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
-            Ok("aarch64") => "arm64",
-            Ok(other) => other,
-            Err(_) => "arm64",
-        }
-        .to_string();
+        let target_arch =
+            env::var("CARGO_CFG_TARGET_ARCH").expect("BUG: cargo sets CARGO_CFG_TARGET_ARCH");
+        let arch = match target_arch.as_str() {
+            "aarch64" => "arm64",
+            other => other,
+        };
         cfg.arg(format!("-DCMAKE_OSX_ARCHITECTURES={arch}"));
         cfg.args([
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0",
@@ -170,14 +169,14 @@ fn main() {
         }
     };
     libs.sort_by_key(|(_, n)| order(n));
-    // `-bundle`: the archives go on the final link line (a `cargo:rustc-link-arg` from a library's
-    // build script does not reach the binary's link). `+whole-archive`: load every member, so the
-    // linker's archive-member selection cannot drop objects the next archive depends on.
+    // `-bundle`: the archives go on the final link line in this order (a `cargo:rustc-link-arg`
+    // from a library's build script does not reach the binary's link, and a bundled archive hides
+    // the order inside the rlib).
     let mut seen = std::collections::HashSet::new();
     for (dir, name) in &libs {
         println!("cargo:rustc-link-search=native={}", dir.display());
         if seen.insert(name.clone()) {
-            println!("cargo:rustc-link-lib=static:+whole-archive,-bundle={name}");
+            println!("cargo:rustc-link-lib=static:-bundle={name}");
         }
     }
     if target_os == "macos" {
