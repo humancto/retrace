@@ -43,3 +43,6 @@ venv/
 # Local planning / scratch
 .planning/
 .playwright-mcp/
+
+# Secondary cargo target (gemma-native build)
+/target-gemma

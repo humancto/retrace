@@ -32,6 +32,7 @@ pub struct AudioOpts {
 /// True when ffprobe sees an audio stream.
 pub fn has_audio(url: &str) -> bool {
     let out = std::process::Command::new("ffprobe")
+        .args(crate::ingest::user_agent_args(url))
         .args([
             "-v",
             "error",

@@ -12,6 +12,9 @@ use ffmpeg_sidecar::event::{FfmpegEvent, LogLevel};
 use image::RgbImage;
 use serde::Serialize;
 use std::collections::HashMap;
+
+/// A live source with no new frame for this long is restarted (see the stall watchdog).
+const STALL_SECS: i64 = 30;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use usls::Image;
@@ -111,6 +114,25 @@ fn is_hls(url: &str) -> bool {
 }
 
 const YT_LIVE_FMT: &str = "best[height<=720][vcodec^=avc1]/best[height<=720]/best";
+
+/// The User-Agent that yt-dlp used when it resolved the media URL. YouTube binds its signed
+/// `googlevideo.com` URLs to the client, and a request with a different User-Agent gets HTTP 403
+/// after the first segments, so ffmpeg and ffprobe must send the same one.
+static YT_USER_AGENT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+const FALLBACK_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36";
+
+/// `["-user_agent", ua]` for media URLs that need yt-dlp's client identity, else empty.
+pub(crate) fn user_agent_args(url: &str) -> Vec<String> {
+    if !url.contains("googlevideo.com") && !url.contains("youtube.com") {
+        return Vec::new();
+    }
+    let ua = YT_USER_AGENT
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or_else(|| FALLBACK_USER_AGENT.to_string());
+    vec!["-user_agent".into(), ua]
+}
 const YT_VOD_FMT: &str = "bv*[height<=720][vcodec^=avc1]/bv*[height<=720]/b[height<=720]/b";
 
 fn yt_dlp(args: &[&str]) -> Result<std::process::Output> {
@@ -179,19 +201,38 @@ pub fn resolve_source(source: &str) -> Result<String> {
         return Ok(source.to_string());
     }
     let url = source.trim_start_matches("youtube:");
-    let out = yt_dlp(&["-g", "--no-playlist", "-f", YT_LIVE_FMT, url])?;
+    // One yt-dlp call prints the media URL and then the User-Agent it used.
+    let out = yt_dlp(&[
+        "--no-playlist",
+        "-f",
+        YT_LIVE_FMT,
+        "--print",
+        "urls",
+        "--print",
+        "%(http_headers.User-Agent)s",
+        url,
+    ])?;
     if !out.status.success() {
         anyhow::bail!(
             "yt-dlp failed: {}",
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
-    let first = String::from_utf8_lossy(&out.stdout)
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout
         .lines()
-        .next()
-        .map(|l| l.trim().to_string())
-        .unwrap_or_default();
-    anyhow::ensure!(!first.is_empty(), "yt-dlp returned no URL");
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    // `--print urls` can print more than one line for a merged format; the media URL is the
+    // first line and the User-Agent (which never starts with "http") is the last one.
+    let first = lines.first().copied().unwrap_or_default().to_string();
+    anyhow::ensure!(first.starts_with("http"), "yt-dlp returned no URL");
+    if let Some(ua) = lines.last().filter(|l| !l.starts_with("http"))
+        && let Ok(mut g) = YT_USER_AGENT.lock()
+    {
+        *g = Some(ua.to_string());
+    }
     Ok(first)
 }
 
@@ -199,7 +240,7 @@ pub fn resolve_source(source: &str) -> Result<String> {
 /// HTTP gets auto-reconnect; HLS starts at the newest segment so the preview is as live as possible
 /// (wall-clock stamping is wrong for HLS: whole segments arrive in a burst and would collapse).
 pub(crate) fn live_input_args(url: &str) -> Vec<String> {
-    let mut a: Vec<String> = Vec::new();
+    let mut a: Vec<String> = user_agent_args(url);
     if url.starts_with("rtsp") {
         a.extend(
             [
@@ -222,6 +263,9 @@ pub(crate) fn live_input_args(url: &str) -> Vec<String> {
                 "1",
                 "-reconnect_delay_max",
                 "5",
+                // Fail the read when the server sends nothing for 20 s, instead of blocking for ever.
+                "-rw_timeout",
+                "20000000",
             ]
             .map(String::from),
         );
@@ -505,6 +549,41 @@ pub fn run_ingest(
         .rawvideo();
     let mut child = cmd.spawn().context("spawn ffmpeg (is ffmpeg on PATH?)")?;
 
+    // Stall watchdog (live sources). An HTTP/HLS server can keep the connection open and send
+    // nothing. ffmpeg then blocks on read, the frame loop never returns, and the restart loop in
+    // `run_live_forever` never runs. When no frame arrives for STALL_SECS, kill ffmpeg: the loop
+    // ends, the source is resolved again (YouTube media URLs expire), and ffmpeg restarts.
+    let last_frame_ms = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(now_ms()));
+    let watchdog_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if live {
+        let pid = child.as_inner().id();
+        let last = last_frame_ms.clone();
+        let stop_flag = watchdog_stop.clone();
+        let cam = opts.cam.clone();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(5));
+                if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                let age_s = (now_ms() - last.load(std::sync::atomic::Ordering::Relaxed)) / 1000;
+                if age_s >= STALL_SECS {
+                    tracing::warn!(cam = %cam, "no frames for {age_s} s: restarting ffmpeg");
+                    // ffmpeg handles SIGTERM in its main loop, which can be blocked on the network
+                    // read here, so escalate to SIGKILL after a short grace period.
+                    let _ = std::process::Command::new("kill")
+                        .arg(pid.to_string())
+                        .status();
+                    std::thread::sleep(Duration::from_secs(3));
+                    let _ = std::process::Command::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .status();
+                    return;
+                }
+            }
+        });
+    }
+
     let mut tracker = Tracker::new(TrackerConfig {
         max_age: (opts.fps * 2.0).max(4.0) as usize,
         max_age_tentative: 3,
@@ -621,6 +700,7 @@ pub fn run_ingest(
             FfmpegEvent::OutputFrame(f) => {
                 frame_idx += 1;
                 stats.frames += 1;
+                last_frame_ms.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
                 if let Some(m) = opts.max_frames
                     && frame_idx > m
                 {
@@ -889,6 +969,7 @@ pub fn run_ingest(
             _ => {}
         }
     }
+    watchdog_stop.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = child.kill();
     let _ = child.wait();
     if let Some(mut r) = recorder.take() {

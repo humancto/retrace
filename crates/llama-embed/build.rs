@@ -15,6 +15,31 @@ use std::process::Command;
 
 const DEFAULT_TAG: &str = "b11461";
 
+/// Finds a build tool on PATH or in the usual package-manager locations (Homebrew on macOS puts
+/// cmake in /opt/homebrew/bin or /usr/local/bin, which a sandboxed or minimal PATH can miss).
+fn tool(name: &str) -> PathBuf {
+    if let Ok(path) = env::var("PATH") {
+        for dir in env::split_paths(&path) {
+            let p = dir.join(name);
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+    for dir in [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/Applications/CMake.app/Contents/bin",
+    ] {
+        let p = Path::new(dir).join(name);
+        if p.is_file() {
+            return p;
+        }
+    }
+    PathBuf::from(name)
+}
+
 fn run(cmd: &mut Command, what: &str) {
     let status = cmd.status().unwrap_or_else(|e| panic!("{what}: {e}"));
     assert!(status.success(), "{what} failed ({status})");
@@ -48,7 +73,7 @@ fn main() {
             let dir = out.join(format!("llama.cpp-{tag}"));
             if !dir.join("CMakeLists.txt").exists() {
                 run(
-                    Command::new("git")
+                    Command::new(tool("git"))
                         .args([
                             "clone",
                             "--quiet",
@@ -70,9 +95,14 @@ fn main() {
     // 2. Configure + build the libraries.
     let build = out.join("build");
     std::fs::create_dir_all(&build).unwrap();
-    let mut cfg = Command::new("cmake");
+    let cmake = tool("cmake");
+    let mut cfg = Command::new(&cmake);
     cfg.arg("-S").arg(&src).arg("-B").arg(&build);
-    if Command::new("ninja").arg("--version").output().is_ok() {
+    if Command::new(tool("ninja"))
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
         cfg.args(["-G", "Ninja"]);
     }
     cfg.args([
@@ -90,6 +120,16 @@ fn main() {
         "-DGGML_OPENMP=OFF",
     ]);
     if target_os == "macos" {
+        // Build for the Rust target's architecture, not for the architecture cmake happens to
+        // run under (an x86_64 cmake under Rosetta would otherwise produce x86_64 archives,
+        // which the arm64 link then reports as "undefined symbols").
+        let arch = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+            Ok("aarch64") => "arm64",
+            Ok(other) => other,
+            Err(_) => "arm64",
+        }
+        .to_string();
+        cfg.arg(format!("-DCMAKE_OSX_ARCHITECTURES={arch}"));
         cfg.args([
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0",
             "-DGGML_METAL=ON",
@@ -105,7 +145,7 @@ fn main() {
         .unwrap_or(4)
         .to_string();
     run(
-        Command::new("cmake").arg("--build").arg(&build).args([
+        Command::new(&cmake).arg("--build").arg(&build).args([
             "--config", "Release", "-j", &jobs, "--target", "llama", "mtmd",
         ]),
         "cmake build",
@@ -130,11 +170,14 @@ fn main() {
         }
     };
     libs.sort_by_key(|(_, n)| order(n));
+    // `-bundle`: the archives go on the final link line (a `cargo:rustc-link-arg` from a library's
+    // build script does not reach the binary's link). `+whole-archive`: load every member, so the
+    // linker's archive-member selection cannot drop objects the next archive depends on.
     let mut seen = std::collections::HashSet::new();
     for (dir, name) in &libs {
         println!("cargo:rustc-link-search=native={}", dir.display());
         if seen.insert(name.clone()) {
-            println!("cargo:rustc-link-lib=static={name}");
+            println!("cargo:rustc-link-lib=static:+whole-archive,-bundle={name}");
         }
     }
     if target_os == "macos" {
