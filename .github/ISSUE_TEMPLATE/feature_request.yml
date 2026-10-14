@@ -1,31 +1,31 @@
 name: Feature request
-description: A capability Retrace should have.
+description: A function that Retrace must have.
 labels: ["enhancement"]
 body:
   - type: textarea
     id: problem
     attributes:
-      label: What are you trying to do?
-      description: The question you want to ask your cameras, or the workflow that is awkward today.
+      label: What do you want to do?
+      description: The question that you want to ask your cameras, or the procedure that is difficult today.
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
       label: Proposed behaviour
-      description: What Retrace would do, from the user's side of the screen. CLI flags, UI, API shape if you have an opinion.
+      description: What Retrace does, from the side of the user. Add the CLI flags, the UI, or the API shape if you have an opinion.
     validations:
       required: true
   - type: checkboxes
     id: constraints
     attributes:
-      label: Fits the project's constraints
+      label: The proposal agrees with the project rules
       options:
-        - label: Works with the network cable pulled (no cloud calls)
+        - label: It works with no network connection (no cloud call)
           required: true
-        - label: Uses open weights / open source only
+        - label: It uses only open weights and open source
           required: true
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives you considered
+      label: Alternatives that you considered

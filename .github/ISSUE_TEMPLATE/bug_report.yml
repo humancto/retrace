@@ -1,17 +1,17 @@
 name: Bug report
-description: Something did not work the way the README says it should.
+description: Retrace did not do what the README says.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the report. The three attachments that solve most bugs are the ingest log line,
-        the `/api/stats` JSON and the search plan from the UI's **Plan** drawer.
+        Thank you for the report. Three attachments solve most bugs: the ingest log line,
+        the `/api/stats` JSON, and the search plan from the **Plan** panel in the UI.
   - type: textarea
     id: what
     attributes:
       label: What happened?
-      description: What you did, what you expected, what you saw instead.
+      description: What you did, what you expected, and what you saw.
     validations:
       required: true
   - type: input
@@ -39,7 +39,7 @@ body:
     id: env
     attributes:
       label: Environment
-      description: OS and chip, `rustc --version`, `ffmpeg -version | head -1`, Retrace version or commit.
+      description: The OS and the chip, `rustc --version`, `ffmpeg -version | head -1`, and the Retrace version or commit.
       render: text
     validations:
       required: true
@@ -47,5 +47,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Ingest / serve output. `RUST_LOG=debug` gives more.
+      description: The ingest or serve output. `RUST_LOG=debug` gives more detail.
       render: text

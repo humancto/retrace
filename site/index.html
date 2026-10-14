@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Retrace — ask your cameras what happened</title>
-<meta name="description" content="Retrace is a fully local video investigator. It turns camera footage into searchable tracklets, answers questions like 'a person in a red jacket' with playable clips, and never sends a byte to the cloud. Open source, MIT.">
+<meta name="description" content="Retrace is a video investigator that runs on one computer. It makes searchable tracklets from camera video, answers questions such as 'a person in a red jacket' with clips, and sends no data to a cloud. Open source, MIT.">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0b0f14">
 <meta property="og:title" content="Retrace — ask your cameras what happened">
-<meta property="og:description" content="A fully local video investigator. Natural-language search over your own footage, rules that fire while the person is still in frame, nothing leaves the machine.">
+<meta property="og:description" content="A video investigator that runs on one computer. Search your own video in plain language. Rules fire while the person is still in the frame. No data leaves the machine.">
 <meta property="og:type" content="website">
 <meta property="og:image" content="assets/search-red-jacket.jpg">
 <meta name="twitter:card" content="summary_large_image">
@@ -175,10 +175,10 @@ footer nav{margin-left:auto;display:flex;flex-wrap:wrap;gap:18px}
 <header class="hero">
   <div class="wrap">
     <div>
-      <p class="osd eyebrow">A fully local video investigator · open source · MIT</p>
+      <p class="osd eyebrow">A video investigator for one computer · open source · MIT</p>
       <h1>Ask your cameras what happened.<span class="q">Then retrace their steps.</span></h1>
-      <p class="lede">Retrace turns footage into one record per person or vehicle per visit, indexes it on your own disk, and answers plain-English questions with playable clips. Pull the network cable. It still works.</p>
-      <div class="ask" role="img" aria-label="A search box cycling through example questions">
+      <p class="lede">Retrace makes one record for each person or vehicle for each visit. It stores the index on your disk. It answers questions in plain language with clips that play. It works with no network connection.</p>
+      <div class="ask" role="img" aria-label="A search box that shows example questions">
         <span class="prompt">›</span>
         <span class="typed" id="typed">a person in a red jacket</span>
         <span class="caret" aria-hidden="true"></span>
@@ -186,13 +186,13 @@ footer nav{margin-left:auto;display:flex;flex-wrap:wrap;gap:18px}
       </div>
       <div class="cta">
         <a class="btn primary" href="https://github.com/humancto/retrace">Get the code</a>
-        <a class="btn ghost" href="#start">Run the demo <code>scripts/e2e.sh</code></a>
+        <a class="btn ghost" href="#start">Run the demo: <code>scripts/e2e.sh</code></a>
       </div>
     </div>
 
     <div>
       <figure class="frame" style="margin:0">
-        <img src="assets/frame-21.jpg" width="480" height="360" alt="A courtyard seen from a fixed camera. A teal line traces the path of one person across the frame from right to left." fetchpriority="high">
+        <img src="assets/frame-21.jpg" width="480" height="360" alt="A courtyard from a fixed camera. A teal line shows the path of one person across the frame from right to left." fetchpriority="high">
         <svg viewBox="0 0 480 360" aria-hidden="true">
           <polyline class="trail" points="464.2,206.6 446.5,202.9 421.9,198.4 403.4,194.2 382.1,188.4 368.8,184.5 351.0,177.8 336.3,172.6 319.8,167.8 301.0,163.0 285.9,158.5 252.2,150.2 239.2,147.8 222.7,144.2 206.2,142.7 190.0,140.8 177.2,140.0 166.4,137.5 153.3,134.7 142.0,132.7 130.8,130.6 120.7,129.0 110.4,127.4 101.9,126.4 89.2,124.8 77.0,124.7 64.2,125.7 48.7,128.3 31.9,130.1 15.9,132.1 7.3,133.0"/>
           <rect class="box" x="409" y="167" width="25.4" height="63.7" rx="1"/>
@@ -227,24 +227,32 @@ footer nav{margin-left:auto;display:flex;flex-wrap:wrap;gap:18px}
   <div class="wrap">
     <div class="sec-head">
       <h2>Evidence</h2>
-      <p>Four screens from one indexed video: OpenCV's public <code style="font-family:var(--mono);font-size:.9em">vtest.avi</code>, eighty seconds of a courtyard and about ten people. Nothing staged, nothing cropped out.</p>
+      <p>Five screens from one indexed video and one live frame: OpenCV's public <code style="font-family:var(--mono);font-size:.9em">vtest.avi</code>, 80 s of a courtyard and about 10 people. The screens are not staged or cropped.</p>
     </div>
     <div class="sheet">
       <figure class="exhibit" style="margin:0">
         <img src="assets/search-red-jacket.jpg" loading="lazy" width="1440" height="900" alt="Search results for 'a person in a red jacket': five cards, the two red jackets ranked first.">
-        <figcaption><b>Search</b>The question becomes a filtered exact nearest-neighbour search with a threshold set per query. The two people actually wearing red come first. The Plan drawer shows the rewrite, the filters and the threshold.</figcaption>
+        <figcaption><b>Search</b>Retrace converts the question into an exact nearest-neighbour search with a filter and a threshold for each query. The two people in red clothes come first. The timeline shows the tracklet density for each camera, with the hits marked.</figcaption>
       </figure>
       <figure class="exhibit" style="margin:0">
         <img src="assets/tracklet-detail.jpg" loading="lazy" width="1440" height="900" alt="A tracklet opened: the clip plays, the path is drawn over the context frame.">
-        <figcaption><b>Retrace</b>Open a hit and the clip plays from four seconds before the visit. The trajectory is drawn over the frame: green where it began, red where it left. Dwell, entry and exit edge, speed, three best crops.</figcaption>
+        <figcaption><b>Retrace</b>Open a result. The clip starts 4 s before the visit. Retrace draws the path on the frame: a green point at the entry, a red point at the exit. The panel shows the dwell, the entry and exit edges, the speed, the 3 best crops, and the actions: pin to the case, more like this, download the clip, copy the link.</figcaption>
       </figure>
       <figure class="exhibit" style="margin:0">
         <img src="assets/more-like-this.jpg" loading="lazy" width="1440" height="900" alt="More like this: nine crops similar to the opened tracklet.">
-        <figcaption><b>More like this</b>Crop similarity links the same person's other visits, including fragments the tracker split. Useful when someone comes back an hour later.</figcaption>
+        <figcaption><b>More like this</b>Retrace compares the crops and finds the other visits of the same person. This includes the fragments that the tracker split. It helps when a person comes back 1 hour later.</figcaption>
+      </figure>
+      <figure class="exhibit" style="margin:0">
+        <img src="assets/timeline-brush.jpg" loading="lazy" width="1440" height="900" alt="A time range selected on the timeline; the results are limited to that range.">
+        <figcaption><b>Timeline</b>Drag on a camera lane to select a time range. The search then runs only in that range, and the lane shows the density of tracklets and the hits. Click a bar to open the tracklet at that time.</figcaption>
+      </figure>
+      <figure class="exhibit" style="margin:0">
+        <img src="assets/live-view.jpg" loading="lazy" width="640" height="360" alt="An analysed frame from a YouTube Live street camera, with boxes, ids, dwell and trails.">
+        <figcaption><b>Live view</b>An analysed frame from a street camera on YouTube Live, 2026-10-14: 2 confirmed persons with their dwell and trails. Retrace draws what the index sees. When a stream stops for 30 s, Retrace restarts the source.</figcaption>
       </figure>
       <figure class="exhibit" style="margin:0">
         <img src="assets/rules-backtest.jpg" loading="lazy" width="1440" height="900" alt="A standing rule added with its backtest: three matches on the indexed footage.">
-        <figcaption><b>Rules</b>A rule is a question that keeps being asked. Add it and the backtest says how often it would have fired on what is already indexed. New matches raise an alert while the person is still in frame.</figcaption>
+        <figcaption><b>Rules and the case</b>A rule is a question that Retrace asks again for each new tracklet. When you add a rule, the backtest counts the matches in the indexed video. The case panel keeps the results that you pin and exports them as JSON.</figcaption>
       </figure>
     </div>
   </div>
@@ -254,7 +262,7 @@ footer nav{margin-left:auto;display:flex;flex-wrap:wrap;gap:18px}
   <div class="wrap">
     <div class="sec-head">
       <h2>Method</h2>
-      <p>The same hybrid recipe the cloud camera vendors run, collapsed onto one laptop with open weights: detect sparsely, track, embed the best crops, index them, search exactly.</p>
+      <p>This is the design of the cloud camera vendors on one laptop, with open weights. Retrace detects at a low frame rate, tracks, embeds the best crops, indexes them, and does an exact search.</p>
     </div>
 <pre class="pipe"><span class="m">camera · file · RTSP · HLS · YouTube Live</span>
    <span class="m">└─</span> ffmpeg <span class="m">(4 fps, 640 px)</span>
@@ -267,16 +275,16 @@ footer nav{margin-left:auto;display:flex;flex-wrap:wrap;gap:18px}
 <span class="m">question</span> <span class="m">→</span> rewrite <span class="m">→</span> text tower <span class="m">→</span> filtered exact KNN <span class="m">→</span> threshold per query <span class="m">→</span> clip cut from the recording</pre>
     <div class="method">
       <div>
-        <h3>Sparse on purpose</h3>
-        <p>Four frames a second is enough to know who came, where they went and how long they stayed. Between two frames a walking person moves most of a box width, so the tracker predicts with constant velocity, gates on IoU or centre distance, and confirms after two hits. On real footage that turned 136 fragments into 35 visits.</p>
+        <h3>A low frame rate, on purpose</h3>
+        <p>Four frames in each second are sufficient to know who came, where they went, and how long they stayed. Between two frames, a person who walks moves almost one box width. The tracker predicts with constant velocity, gates on IoU or centre distance, and confirms a track after 2 hits. On real video this made 35 visits from 136 fragments.</p>
       </div>
       <div>
         <h3>One file, exact search</h3>
-        <p>Tracklets, vectors and captions live in a single SQLite database with <code style="font-family:var(--mono);font-size:.9em">sqlite-vec</code> and FTS5. Search is an exact cosine scan over the filtered candidates, then a threshold set from the score distribution of that query, so "a bicycle" returns one hit and "a person" returns thirty.</p>
+        <p>The tracklets, the vectors, and the captions are in one SQLite database with <code style="font-family:var(--mono);font-size:.9em">sqlite-vec</code> and FTS5. The search is an exact cosine scan over the filtered candidates. The threshold comes from the score distribution of the query. "a bicycle" returns 1 result and "a person" returns 30.</p>
       </div>
       <div>
-        <h3>Sight, sound and words</h3>
-        <p>With EmbeddingGemma 2, text, images and ten-second audio windows share one space. "Glass breaking" and "a white van" are the same kind of query, answered from the same index, in a hundred languages, with no fixed list of classes.</p>
+        <h3>Images, sound, and words</h3>
+        <p>With EmbeddingGemma 2, text, images, and 10 s audio windows share one space. "Glass breaking" and "a white van" are the same type of query. The same index answers both, in more than 100 languages, with no fixed list of classes.</p>
       </div>
     </div>
   </div>
@@ -286,18 +294,18 @@ footer nav{margin-left:auto;display:flex;flex-wrap:wrap;gap:18px}
   <div class="wrap">
     <div class="sec-head">
       <h2>Numbers</h2>
-      <p>Measured on 13 October 2026 with <code style="font-family:var(--mono);font-size:.9em">scripts/e2e.sh</code> and <code style="font-family:var(--mono);font-size:.9em">retrace eval</code> on an Apple M4 Max, CPU execution provider, SigLIP 2 B/16 at 256 px. The golden set is in the repository; every hit was checked by eye.</p>
+      <p>Measured on 2026-10-13 with <code style="font-family:var(--mono);font-size:.9em">scripts/e2e.sh</code> and <code style="font-family:var(--mono);font-size:.9em">retrace eval</code> on an Apple M4 Max, CPU execution provider, SigLIP 2 B/16 at 256 px. The golden set is in the repository. We checked each hit by eye.</p>
     </div>
     <table class="ledger">
       <thead><tr><th scope="col">What</th><th scope="col">Result</th><th scope="col">Note</th></tr></thead>
       <tbody>
         <tr><td>Analysis of 79 s of video</td><td class="n">33 s<small>2.4× real time</small></td><td>318 frames at 4 fps, 3,121 detections, 35 tracklets</td></tr>
-        <tr><td>Search, end to end</td><td class="n">14 ms<small>p50 · p95 16 ms</small></td><td>embed the question, exact KNN, threshold, JSON out</td></tr>
-        <tr><td>Recall at 5, seven queries</td><td class="n">0.95<small>mAP 0.95</small></td><td>the one miss is a white van the detector called a car; every hit in the golden set was checked by eye</td></tr>
-        <tr><td>Bytes sent to a cloud</td><td class="n">0</td><td>model weights download once; after that the cable can come out</td></tr>
+        <tr><td>Search, end to end</td><td class="n">14 ms<small>p50 · p95 16 ms</small></td><td>embed the question, do an exact KNN, apply the threshold, return JSON</td></tr>
+        <tr><td>Recall at 5, seven queries</td><td class="n">0.95<small>mAP 0.95</small></td><td>the one miss is a white van that the detector classed as a car; we checked each hit in the golden set by eye</td></tr>
+        <tr><td>Bytes sent to a cloud</td><td class="n">0</td><td>the model weights download one time; after that, no network is necessary</td></tr>
       </tbody>
     </table>
-    <p class="fine">A two-core Linux container answers the same searches in 50–65 ms and keeps up with four cameras by analysing every fourth to sixth frame. Backpressure skips frames; it never queues them.</p>
+    <p class="fine">A Linux container with 2 cores answers the same searches in 50 to 65 ms. It keeps up with 4 cameras because it analyses each fourth to sixth frame. Backpressure skips frames. It does not queue them.</p>
   </div>
 </section>
 
@@ -305,33 +313,33 @@ footer nav{margin-left:auto;display:flex;flex-wrap:wrap;gap:18px}
   <div class="wrap">
     <div class="sec-head">
       <h2>Get started</h2>
-      <p>One binary, one database file, one HTML page. The first build compiles the ONNX runtime bindings and takes a few minutes; the first run downloads the open weights once.</p>
+      <p>One binary, one database file, one HTML page. The first build compiles the onnxruntime bindings and takes some minutes. The first run downloads the open weights one time.</p>
     </div>
 <pre class="code"><span class="c"># macOS (Apple Silicon) or Linux · Rust 1.88+ · ffmpeg</span>
 <span class="p">$ </span>brew install ffmpeg rust
 <span class="p">$ </span>git clone https://github.com/humancto/retrace && cd retrace
 <span class="p">$ </span>cargo build --release
-<span class="p">$ </span>scripts/e2e.sh                 <span class="c"># public sample video → index → search → clip → eval</span>
+<span class="p">$ </span>scripts/e2e.sh                 <span class="c"># sample video → index → search → clip → eval</span>
 
-<span class="c"># your own footage</span>
+<span class="c"># your video</span>
 <span class="p">$ </span>./target/release/retrace --embedder siglip2-b16-256 ingest --source ~/Movies/driveway.mp4 --cam driveway
 <span class="p">$ </span>./target/release/retrace --embedder siglip2-b16-256 serve
 <span class="p">$ </span>open http://127.0.0.1:8080/
 
-<span class="c"># live cameras, while serving</span>
+<span class="c"># live cameras, while the server runs</span>
 <span class="p">$ </span>./target/release/retrace --embedder siglip2-b16-256 serve --source door=rtsp://user:pass@192.168.1.40:554/stream</pre>
     <div class="why">
       <div>
         <h3>Nothing leaves the machine</h3>
-        <p>No accounts, no telemetry, no update checks. The only outbound calls are the one-time weight downloads and the sources you point it at. Use <code style="font-family:var(--mono);font-size:.9em">--models-dir</code> on an air-gapped box.</p>
+        <p>No account, no telemetry, no update check. The only outbound calls are the one-time weight downloads and the sources that you give. Use <code style="font-family:var(--mono);font-size:.9em">--models-dir</code> on a computer with no network.</p>
       </div>
       <div>
         <h3>Open weights, open code</h3>
-        <p>DEIM / D-FINE, CLIP, SigLIP 2 and EmbeddingGemma 2 are Apache-2.0 or MIT. Retrace itself is MIT. Swap the detector or the embedder with a flag.</p>
+        <p>DEIM / D-FINE, CLIP, SigLIP 2, and EmbeddingGemma 2 are Apache-2.0 or MIT. Retrace is MIT. One flag changes the detector or the embedder.</p>
       </div>
       <div>
         <h3>Everything is an API call</h3>
-        <p>Search, tracklets, clips, thumbnails, rules, alerts, events and a live SSE feed are plain JSON over localhost. The UI is one HTML file that uses nothing the API does not expose.</p>
+        <p>Search, tracklets, clips, thumbnails, rules, alerts, events, and a live SSE feed are JSON over localhost. The UI is one HTML file. It uses only functions that the API exposes.</p>
       </div>
     </div>
   </div>
@@ -340,7 +348,7 @@ footer nav{margin-left:auto;display:flex;flex-wrap:wrap;gap:18px}
 <footer>
   <div class="wrap">
     <span class="brand">RETRACE</span>
-    <span>MIT license · v0.3.0</span>
+    <span>MIT license · v0.4.0</span>
     <nav aria-label="Links">
       <a href="https://github.com/humancto/retrace">Source</a>
       <a href="https://github.com/humancto/retrace#readme">README</a>
