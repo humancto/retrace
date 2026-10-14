@@ -1,0 +1,72 @@
+[package]
+name = "retrace"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A fully local video investigator: ask your cameras what happened, then retrace their steps. Nothing leaves the machine."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/humancto/retrace"
+homepage = "https://github.com/humancto/retrace"
+documentation = "https://github.com/humancto/retrace#readme"
+keywords = ["video", "computer-vision", "semantic-search", "surveillance", "local-first"]
+categories = ["multimedia::video", "computer-vision", "command-line-utilities"]
+publish = false
+
+[workspace]
+members = [".", "crates/llama-embed"]
+
+[dependencies]
+anyhow = "1.0.104"
+axum = "0.8"
+base64 = "0.23.1"
+chrono = "0.4.45"
+clap = { version = "4", features = ["derive", "env"] }
+ffmpeg-sidecar = "2.6.0"
+futures = "0.3.34"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "system-proxy"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sqlite-vec = "0.1.9"
+tokio = { version = "1.53.2", features = ["full"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+zerocopy = "0.8"
+ureq = { version = "3", features = ["json"] }
+# EmbeddingGemma 2 in-process (llama.cpp + mtmd, built from source): `--features gemma-native`.
+llama-embed = { path = "crates/llama-embed", optional = true }
+tempfile = "3"
+percent-encoding = "2"
+
+# usls wraps onnxruntime (via `ort`) with pre/post-processing for DEIM/D-FINE/RT-DETR/RF-DETR
+# detectors, CLIP/SigLIP 2 embeddings and ByteTrack. Pinned to a commit; it pins ort =2.0.0-rc.13.
+[dependencies.usls]
+git = "https://github.com/jamjamjon/usls"
+rev = "c15ad77"
+default-features = false
+features = ["vision", "vlm", "ort-api-28"]
+
+[features]
+# Default: let `ort` download a prebuilt onnxruntime (works on a Mac with normal internet).
+default = ["download-ort"]
+download-ort = ["usls/ort-download-binaries"]
+# Load a system/pip onnxruntime at runtime instead (set ORT_DYLIB_PATH). Used where cdn.pyke.io is unreachable.
+dynamic-ort = ["usls/ort-load-dynamic"]
+# Apple CoreML execution provider (experimental for transformer detectors; CPU is the day-one path).
+coreml = ["usls/coreml"]
+# EmbeddingGemma 2 inside the binary: builds llama.cpp (pinned tag) with cmake at compile time.
+gemma-native = ["dep:llama-embed"]
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4

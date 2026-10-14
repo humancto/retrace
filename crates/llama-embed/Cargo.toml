@@ -1,0 +1,16 @@
+[package]
+name = "llama-embed"
+version = "0.3.0"
+edition = "2024"
+description = "EmbeddingGemma 2 in-process via llama.cpp + mtmd (text, images, audio in one space)"
+license = "MIT"
+repository = "https://github.com/humancto/retrace"
+publish = false
+build = "build.rs"
+links = "llama_embed"
+
+[dependencies]
+anyhow = "1"
+
+[build-dependencies]
+bindgen = "0.72"

@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retrace</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%230e1319%27/%3E%3Cpath d=%27M7 23 Q12 9 17 16 T26 9%27 fill=%27none%27 stroke=%27%233fc1b9%27 stroke-width=%273%27 stroke-linecap=%27round%27/%3E%3Ccircle cx=%2726%27 cy=%279%27 r=%273%27 fill=%27%23e06b69%27/%3E%3C/svg%3E">
+<style>
+:root{--bg:#0e1319;--surface:#151b23;--surface2:#1c242e;--fg:#e5ebf2;--muted:#95a3b3;--line:#2a3442;--accent:#3fc1b9;--accent2:#9ae6e0;--warn:#e29a45;--danger:#e06b69;--ok:#5fc08a;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:-apple-system,"IBM Plex Sans","Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans)}
+a{color:var(--accent2)}
+header{display:flex;flex-wrap:wrap;gap:14px 24px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--surface)}
+header h1{font-size:18px;margin:0;letter-spacing:.02em;font-weight:600}
+header h1 span{color:var(--muted);font-weight:400;font-size:13px;margin-left:8px}
+.osd{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.rec::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--danger);margin-right:6px;animation:blink 1.6s steps(1) infinite}
+@keyframes blink{50%{opacity:.25}}
+main{display:grid;grid-template-columns:1fr 340px;gap:0;min-height:calc(100vh - 58px)}
+@media (max-width:900px){main{grid-template-columns:1fr}}
+.left{padding:16px 20px;min-width:0}
+.right{border-left:1px solid var(--line);background:var(--surface);padding:14px 16px;min-width:0}
+.searchbar{display:flex;gap:8px;flex-wrap:wrap}
+.searchbar input[type=text]{flex:1 1 320px;min-width:0;background:var(--surface2);border:1px solid var(--line);color:var(--fg);padding:10px 12px;font-size:16px;border-radius:4px}
+.searchbar button,.btn{background:var(--accent);color:#06302e;border:0;padding:10px 16px;font-weight:600;border-radius:4px;cursor:pointer}
+.btn.sec{background:var(--surface2);color:var(--fg);border:1px solid var(--line)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 6px;align-items:center}
+.filters select,.filters input{background:var(--surface2);border:1px solid var(--line);color:var(--fg);padding:6px 8px;border-radius:4px;font-size:13px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 14px}
+.chip{font-family:var(--mono);font-size:12px;padding:4px 9px;border:1px solid var(--line);border-radius:999px;color:var(--muted);cursor:pointer;background:transparent}
+.chip:hover{border-color:var(--accent);color:var(--fg)}
+.plan{font-family:var(--mono);font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--line);padding:8px 10px;margin:8px 0 12px;white-space:pre-wrap;display:none}
+.lanes{background:var(--surface);border:1px solid var(--line);margin:0 0 14px;padding:8px 10px;overflow:hidden}
+.lane{display:grid;grid-template-columns:90px 1fr;gap:8px;align-items:center;height:22px}
+.lane .nm{font-family:var(--mono);font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lane .bar{position:relative;height:14px;background:var(--surface2);border-radius:2px}
+.lane .tk{position:absolute;top:2px;height:10px;min-width:2px;background:var(--accent);opacity:.75;cursor:pointer;border-radius:1px}
+.lane .tk.vehicle{background:var(--warn)}
+.lane .tk.hit{opacity:1;box-shadow:0 0 0 1px #fff}
+.lane .ev{position:absolute;top:-2px;width:2px;height:18px;background:var(--danger)}
+.axis{font-family:var(--mono);font-size:11px;color:var(--muted);display:flex;justify-content:space-between;padding-left:98px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;overflow:hidden;cursor:pointer;min-width:0}
+.card:hover{border-color:var(--accent)}
+.card .img{position:relative;aspect-ratio:4/3;background:#000;overflow:hidden}
+.card .img img{width:100%;height:100%;object-fit:cover;display:block}
+.card .img .box{position:absolute;border:2px solid var(--accent);box-shadow:0 0 0 1px rgba(0,0,0,.5)}
+.card .img .crop{position:absolute;right:6px;bottom:6px;width:56px;height:72px;object-fit:cover;border:1px solid var(--line);background:#000}
+.card .meta{padding:8px 10px;font-size:13px}
+.card .meta .top{display:flex;justify-content:space-between;gap:8px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.card .score{height:4px;background:var(--surface2);margin:6px 0}
+.card .score i{display:block;height:4px;background:var(--accent)}
+.card .cap{color:var(--fg);font-size:13px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty{color:var(--muted);padding:40px 0;text-align:center}
+.audiohits{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin:0 0 14px}
+.audiohits:empty{display:none}
+.ahit{background:var(--surface);border:1px solid #3a2f5a;border-radius:6px;padding:10px 12px;min-width:0}
+.ahit .top{display:flex;justify-content:space-between;gap:8px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.ahit .top b{color:#b9a7f0;font-weight:600;letter-spacing:.04em}
+.ahit audio{width:100%;height:32px;margin-top:8px}
+.ahit .bar{height:4px;background:var(--surface2);margin:6px 0 0}
+.ahit .bar i{display:block;height:4px;background:#9b87e6}
+h3{font-size:13px;font-family:var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:14px 0 8px;font-weight:500}
+.liveview{display:none;margin-bottom:12px}
+.liveview .lv-head{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+.liveview .lv-head select{background:var(--surface2);border:1px solid var(--line);color:var(--fg);padding:4px 6px;border-radius:4px;font-size:12px;flex:1;min-width:0}
+.liveview img{width:100%;display:block;border-radius:4px;background:#000;aspect-ratio:4/3;object-fit:contain;cursor:zoom-in;border:1px solid var(--line)}
+.liveview .m{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px}
+.dlg.theater{grid-template-columns:1fr;width:min(1280px,100%)}
+.dlg.theater img{width:100%;display:block;border-radius:4px;background:#000}
+.feed{display:flex;flex-direction:column;gap:6px;max-height:40vh;overflow:auto}
+.feed .it{display:grid;grid-template-columns:48px 1fr;gap:8px;align-items:center;background:var(--surface2);border:1px solid var(--line);padding:6px;border-radius:4px;cursor:pointer;font-size:12.5px}
+.feed .it img{width:48px;height:48px;object-fit:cover;border-radius:3px;background:#000}
+.feed .it.alert{border-color:var(--warn);background:#3c2a14}
+.feed .it .m{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.rule-form{display:grid;gap:6px}
+.rule-form input,.rule-form select{background:var(--surface2);border:1px solid var(--line);color:var(--fg);padding:7px 8px;border-radius:4px;font-size:13px;width:100%}
+.rules .r{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:13px;padding:6px 0;border-bottom:1px solid var(--line)}
+.rules .r small{display:block;color:var(--muted);font-family:var(--mono);font-size:11px}
+.rules button{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:4px;cursor:pointer;padding:2px 8px}
+.bt{font-family:var(--mono);font-size:12px;color:var(--accent2);margin:4px 0 8px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:20px;z-index:10}
+.modal.open{display:flex}
+.dlg{background:var(--surface);border:1px solid var(--line);border-radius:8px;width:min(980px,100%);max-height:94vh;overflow:auto;padding:16px;display:grid;grid-template-columns:1fr 300px;gap:16px}
+@media (max-width:760px){.dlg{grid-template-columns:1fr}}
+.dlg video{width:100%;background:#000;border-radius:4px;max-height:60vh}
+.dlg .ctxwrap{position:relative;margin-top:10px}
+.dlg .ctxwrap img{width:100%;display:block;border-radius:4px}
+.dlg .ctxwrap canvas{position:absolute;inset:0;width:100%;height:100%}
+.kv{font-size:13px;display:grid;grid-template-columns:max-content 1fr;gap:4px 12px}
+.kv b{font-family:var(--mono);font-weight:500;color:var(--muted);font-size:11px;letter-spacing:.05em;text-transform:uppercase}
+.crops{display:flex;gap:6px;margin:8px 0}
+.crops img{height:90px;border:1px solid var(--line);border-radius:3px;background:#000}
+.close{position:sticky;top:0;float:right;background:var(--surface2);border:1px solid var(--line);color:var(--fg);border-radius:4px;cursor:pointer;padding:4px 10px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--warn);color:#2a1a06;padding:10px 16px;border-radius:6px;font-weight:600;display:none;z-index:20;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+.toast.show{display:block}
+</style>
+</head>
+<body>
+<header>
+  <h1>RETRACE <span>ask your cameras what happened</span></h1>
+  <div class="osd"><span class="rec">live</span><span id="s-cams">0 cams</span><span id="s-tracklets">0 tracklets</span><span id="s-model">—</span><span id="s-net">offline-capable</span></div>
+</header>
+<main>
+  <section class="left">
+    <form class="searchbar" id="f">
+      <input type="text" id="q" placeholder='Ask your cameras: "person with a backpack walking left to right"' autocomplete="off">
+      <button type="submit">Search</button>
+      <button type="button" class="btn sec" id="planbtn">Plan</button>
+    </form>
+    <div class="filters">
+      <select id="cam"><option value="">all cameras</option></select>
+      <select id="cls"><option value="">any class</option><option>person</option><option>car</option><option>truck</option><option>bus</option><option>bicycle</option><option>motorcycle</option></select>
+      <select id="dir"><option value="">any direction</option><option value="left_to_right">left → right</option><option value="right_to_left">right → left</option><option value="toward_camera">toward camera</option><option value="away_from_camera">away from camera</option><option value="stationary">stationary</option></select>
+      <select id="entry"><option value="">entered anywhere</option><option value="left">entered from left</option><option value="right">entered from right</option><option value="top">entered from top</option><option value="bottom">entered from bottom</option><option value="interior">appeared inside</option></select>
+      <label style="font-size:13px;color:var(--muted)">dwell ≥ <input id="dwell" type="number" min="0" step="1" value="0" style="width:64px"> s</label>
+      <select id="range"><option value="">all time</option><option value="3600000">last hour</option><option value="86400000">last 24 h</option></select>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="plan" id="plan"></div>
+    <div class="lanes" id="lanes"></div>
+    <div id="summary" class="osd" style="margin-bottom:8px"></div>
+    <div class="audiohits" id="audio"></div>
+    <div class="grid" id="grid"><div class="empty">Index something, then ask a question.</div></div>
+  </section>
+  <aside class="right">
+    <div class="liveview" id="liveview">
+      <div class="lv-head"><span class="osd"><span class="rec">live view</span></span><select id="lvcam"></select></div>
+      <img id="lvimg" alt="live preview" title="click to expand">
+      <div class="m" id="lvmeta">detections drawn on the analysed frames — what the index sees</div>
+    </div>
+    <h3>Live feed</h3>
+    <div class="feed" id="feed"></div>
+    <h3>Rules (standing queries)</h3>
+    <form class="rule-form" id="rf">
+      <input id="rtext" type="text" placeholder='e.g. "person carrying a box"' required>
+      <div style="display:flex;gap:6px"><input id="rscore" type="number" step="0.01" min="0" max="1" value="0.27" title="min cosine score"><input id="rdwell" type="number" step="1" min="0" value="0" title="min dwell seconds"><select id="rclass"><option value="">any class</option><option>person</option><option>car</option><option>truck</option></select></div>
+      <button class="btn" type="submit">Add rule + backtest</button>
+    </form>
+    <div class="bt" id="bt"></div>
+    <div class="rules" id="rules"></div>
+  </aside>
+</main>
+<div class="modal" id="modal"><div class="dlg" id="dlg"></div></div>
+<div class="toast" id="toast"></div>
+<script>
+const $=s=>document.querySelector(s);
+const fmtT=ms=>new Date(ms).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+const fmtD=ms=>new Date(ms).toLocaleString();
+let stats={}, cams=[], lastHits=[];
+const EXAMPLES=["person with a backpack","person in a white shirt","two people walking together","person wearing dark clothes walking away","a car","person carrying a bag"];
+$('#chips').innerHTML=EXAMPLES.map(e=>`<button type="button" class="chip">${e}</button>`).join('');
+$('#chips').addEventListener('click',e=>{if(e.target.classList.contains('chip')){$('#q').value=e.target.textContent;doSearch();}});
+
+async function loadStats(){
+  stats=await (await fetch('/api/stats')).json();
+  cams=stats.cameras||[];
+  $('#s-cams').textContent=`${cams.length} cam${cams.length===1?'':'s'}`;
+  $('#s-tracklets').textContent=`${stats.tracklets} tracklets · ${stats.captioned} captioned · ${stats.alerts} alerts`+(stats.audio_windows?` · ${stats.audio_windows} audio windows`:'');
+  $('#s-model').textContent=`${stats.emb_model||'?'} · ${stats.emb_dim||'?'}d`;
+  const sel=$('#cam'); const cur=sel.value; sel.innerHTML='<option value="">all cameras</option>'+cams.map(c=>`<option value="${c.name}">${c.name}</option>`).join(''); sel.value=cur;
+  drawLanes();
+}
+function params(){
+  const p=new URLSearchParams();
+  p.set('q',$('#q').value.trim());
+  if($('#cam').value)p.set('cam',$('#cam').value);
+  if($('#cls').value)p.set('class',$('#cls').value);
+  if($('#dir').value)p.set('direction',$('#dir').value);
+  if($('#entry').value)p.set('entry',$('#entry').value);
+  if(+$('#dwell').value>0)p.set('min_dwell_s',$('#dwell').value);
+  if($('#range').value){p.set('t0',Date.now()-(+$('#range').value));}
+  p.set('k','48');
+  return p;
+}
+let lastPlan=null;
+async function doSearch(){
+  const q=$('#q').value.trim(); if(!q)return;
+  const t=performance.now();
+  const r=await (await fetch('/api/search?'+params())).json();
+  if(r.error){toast(r.error);return;}
+  lastPlan=r; lastHits=r.hits;
+  $('#plan').textContent=JSON.stringify({rewritten:r.rewritten,plan:r.plan,timing_ms:r.timing_ms},null,2);
+  const ah=r.audio_hits||[];
+  $('#summary').innerHTML=`<span>${r.hits.length} hits of ${r.candidates} candidates</span>${ah.length?`<span style="color:#b9a7f0">${ah.length} audio</span>`:''}<span>threshold ${r.threshold.toFixed(3)}</span><span>search ${r.timing_ms.total.toFixed(0)} ms (embed ${r.timing_ms.embed.toFixed(0)} · knn ${r.timing_ms.knn.toFixed(0)}${r.timing_ms.audio!==undefined?' · audio '+r.timing_ms.audio.toFixed(0):''})</span><span>round trip ${(performance.now()-t).toFixed(0)} ms</span>`;
+  renderAudio(ah); renderGrid(r.hits); drawLanes();
+}
+// Audio windows that matched the query (EmbeddingGemma 2 index only): same query, same timeline, a sound.
+function renderAudio(hits){
+  const el=$('#audio'); if(!hits.length){el.innerHTML='';return;}
+  const top=Math.max(...hits.map(h=>h.score));
+  el.innerHTML=hits.map(h=>`<div class="ahit"><div class="top"><span><b>AUDIO</b> · ${h.cam_name}</span><span>${h.score.toFixed(3)}</span></div>
+    <div class="top"><span>${fmtT(h.t0)} – ${fmtT(h.t1)}</span><span>${((h.t1-h.t0)/1000).toFixed(0)}s</span></div>
+    <div class="bar"><i style="width:${Math.max(4,100*h.score/top)}%"></i></div>
+    <audio controls preload="none" src="/clip?cam=${encodeURIComponent(h.cam_name)}&t0=${h.t0}&t1=${h.t1}&pre=1000"></audio></div>`).join('');
+}
+function renderGrid(hits){
+  const g=$('#grid');
+  if(!hits.length){g.innerHTML='<div class="empty">No matches above the confidence band. Try a broader phrase or "all" mode.</div>';return;}
+  const top=Math.max(...hits.map(h=>h.score));
+  g.innerHTML=hits.map(h=>{const t=h.tracklet;const b=JSON.parse(t.bbox_json||'[0,0,0,0]');
+    return `<div class="card" data-id="${t.id}">
+      <div class="img"><img loading="lazy" src="/ctx/${t.id}" alt=""><div class="box" style="left:${b[0]*100}%;top:${b[1]*100}%;width:${b[2]*100}%;height:${b[3]*100}%"></div><img class="crop" loading="lazy" src="/thumb/${t.id}" alt=""></div>
+      <div class="meta"><div class="top"><span>${t.cam_name} · ${t.class}</span><span>${h.score.toFixed(3)}${h.text_rank?' · cap#'+h.text_rank:''}</span></div>
+      <div class="score"><i style="width:${Math.max(4,100*h.score/top)}%"></i></div>
+      <div class="top"><span>${fmtT(t.t0)} · ${t.dwell_s.toFixed(0)}s</span><span>${t.direction.replace(/_/g,' ')}</span></div>
+      <div class="cap">${t.caption_text||('entered '+t.entry_edge+', left '+t.exit_edge)}</div></div></div>`;}).join('');
+}
+$('#grid').addEventListener('click',e=>{const c=e.target.closest('.card');if(c)openTracklet(+c.dataset.id);});
+$('#f').addEventListener('submit',e=>{e.preventDefault();doSearch();});
+$('#planbtn').addEventListener('click',()=>{const p=$('#plan');p.style.display=p.style.display==='block'?'none':'block';});
+for(const id of ['cam','cls','dir','entry','range'])$('#'+id).addEventListener('change',()=>{if($('#q').value.trim())doSearch();});
+
+async function drawLanes(){
+  const el=$('#lanes'); if(!stats.t_min){el.innerHTML='';return;}
+  let t1=stats.t_max, t0=stats.t_min; if($('#range').value){t0=Math.max(t0,Date.now()-(+$('#range').value));}
+  if(t1-t0<1000){el.innerHTML='';return;}
+  const rows=await (await fetch(`/api/tracklets?t0=${t0}&t1=${t1}&limit=3000`)).json();
+  const evs=await (await fetch(`/api/events?t0=${t0}&t1=${t1}&limit=500`)).json();
+  const hit=new Set(lastHits.map(h=>h.tracklet.id));
+  const byCam={}; for(const r of rows){(byCam[r.cam_name]=byCam[r.cam_name]||[]).push(r);}
+  const span=t1-t0;
+  el.innerHTML=Object.entries(byCam).map(([cam,rs])=>`<div class="lane"><div class="nm" title="${cam}">${cam}</div><div class="bar">${rs.map(r=>`<i class="tk ${r.class!=='person'?'vehicle':''} ${hit.has(r.id)?'hit':''}" data-id="${r.id}" style="left:${(r.t0-t0)/span*100}%;width:${Math.max(0.15,(r.t1-r.t0)/span*100)}%" title="${r.class} ${fmtT(r.t0)} ${r.dwell_s.toFixed(0)}s"></i>`).join('')}${evs.filter(e=>!e.cam||cams.find(c=>c.id===e.cam&&c.name===cam)).map(e=>`<i class="ev" style="left:${(e.ts-t0)/span*100}%" title="${e.type} ${fmtT(e.ts)}"></i>`).join('')}</div></div>`).join('')+`<div class="axis"><span>${fmtD(t0)}</span><span>${fmtD(t1)}</span></div>`;
+}
+$('#lanes').addEventListener('click',e=>{const t=e.target.closest('.tk');if(t)openTracklet(+t.dataset.id);});
+
+async function openTracklet(id){
+  const t=await (await fetch('/api/tracklets/'+id)).json();
+  const crops=JSON.parse(t.best_crops_json||'[]');
+  const dlg=$('#dlg');
+  dlg.innerHTML=`<div>
+    <video id="vid" controls autoplay muted playsinline src="/clip?cam=${encodeURIComponent(t.cam_name)}&t0=${t.t0}&t1=${t.t1}"></video>
+    <div class="ctxwrap"><img id="ctximg" src="/ctx/${t.id}" alt=""><canvas id="pathc"></canvas></div>
+  </div>
+  <div><button class="close" id="closebtn">close</button>
+    <div class="kv"><b>id</b><span>${t.id}</span><b>camera</b><span>${t.cam_name}</span><b>class</b><span>${t.class}</span><b>when</b><span>${fmtD(t.t0)}</span><b>dwell</b><span>${t.dwell_s.toFixed(1)} s · ${t.n_frames} frames</span><b>path</b><span>entered ${t.entry_edge}, left ${t.exit_edge}, ${t.direction.replace(/_/g,' ')}</span><b>speed</b><span>${t.speed.toFixed(2)} frame/s</span><b>caption</b><span>${t.caption_text||'<i style="color:var(--muted)">not yet annotated</i>'}</span></div>
+    <div class="crops">${crops.map((c,i)=>`<img src="/thumb/${t.id}?k=${i}" title="score ${c.score.toFixed(0)}">`).join('')}</div>
+    <button class="btn sec" id="morebtn">More like this</button>
+    <div id="more" class="grid" style="grid-template-columns:repeat(3,1fr);margin-top:10px"></div>
+  </div>`;
+  $('#dlg').className='dlg';
+  $('#modal').classList.add('open');
+  $('#closebtn').onclick=closeModal;
+  $('#morebtn').onclick=async()=>{const r=await (await fetch('/api/similar/'+t.id+'?limit=9')).json();$('#more').innerHTML=r.hits.map(h=>`<div class="card" data-id="${h.tracklet.id}"><div class="img" style="aspect-ratio:1"><img src="/thumb/${h.tracklet.id}"></div><div class="meta"><div class="top"><span>${h.tracklet.cam_name}</span><span>${h.score.toFixed(2)}</span></div></div></div>`).join('');$('#more').onclick=e=>{const c=e.target.closest('.card');if(c)openTracklet(+c.dataset.id);};};
+  const img=$('#ctximg'); img.onload=()=>{const c=$('#pathc');c.width=img.clientWidth;c.height=img.clientHeight;const x=c.getContext('2d');const p=JSON.parse(t.path_json||'[]');x.lineWidth=2;x.strokeStyle='#3fc1b9';x.beginPath();p.forEach((q,i)=>{const px=q[1]*c.width,py=q[2]*c.height;i?x.lineTo(px,py):x.moveTo(px,py);});x.stroke();if(p.length){const a=p[0],b=p[p.length-1];x.fillStyle='#5fc08a';x.beginPath();x.arc(a[1]*c.width,a[2]*c.height,5,0,7);x.fill();x.fillStyle='#e06b69';x.beginPath();x.arc(b[1]*c.width,b[2]*c.height,5,0,7);x.fill();}};
+}
+$('#modal').addEventListener('click',e=>{if(e.target.id==='modal')closeModal();});
+
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),4000);}
+function feedItem(t,alert){const el=document.createElement('div');el.className='it'+(alert?' alert':'');el.dataset.id=alert?alert.tracklet_id:t.id;
+  el.innerHTML=`<img src="/thumb/${alert?alert.tracklet_id:t.id}" alt=""><div>${alert?`<b>ALERT · ${alert.rule_name}</b><div class="m">${alert.message}</div>`:`${t.class} on ${t.cam_name}<div class="m">${fmtT(t.t0)} · ${t.dwell_s.toFixed(0)}s · ${t.direction.replace(/_/g,' ')}</div>`}</div>`;
+  el.onclick=()=>openTracklet(+el.dataset.id);const f=$('#feed');f.prepend(el);while(f.children.length>40)f.lastChild.remove();}
+function connectLive(){const es=new EventSource('/api/live');es.addEventListener('tracklet',e=>{feedItem(JSON.parse(e.data));loadStats();});es.addEventListener('alert',e=>{const a=JSON.parse(e.data);feedItem(null,a);toast('ALERT: '+a.message);});es.onerror=()=>{es.close();setTimeout(connectLive,3000);};}
+
+async function loadRules(){const rs=await (await fetch('/api/rules')).json();$('#rules').innerHTML=rs.map(r=>`<div class="r"><div>${r.name}<small>score ≥ ${r.min_score} · ${r.class||'any'} · dwell ≥ ${r.min_dwell_s}s</small></div><button data-id="${r.id}">✕</button></div>`).join('')||'<div style="color:var(--muted);font-size:13px">No rules yet.</div>';}
+$('#rules').addEventListener('click',async e=>{if(e.target.dataset.id){await fetch('/api/rules/'+e.target.dataset.id,{method:'DELETE'});loadRules();}});
+$('#rf').addEventListener('submit',async e=>{e.preventDefault();const body={text:$('#rtext').value,min_score:+$('#rscore').value,min_dwell_s:+$('#rdwell').value,class:$('#rclass').value||null};
+  const r=await (await fetch('/api/rules',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})).json();
+  if(r.error){toast(r.error);return;}
+  $('#bt').innerHTML=`backtest over indexed footage: <b>${r.backtest.matches}</b> matches ≈ <b>${r.backtest.per_day.toFixed(1)}/day</b>`;$('#rtext').value='';loadRules();loadStats();});
+
+// Live preview: one MJPEG stream of annotated frames per camera, served by the ingest thread.
+async function loadLiveCams(){
+  let lc=[]; try{lc=await (await fetch('/api/live-cams')).json();}catch(e){}
+  const lv=$('#liveview'); if(!lc.length){lv.style.display='none';return;}
+  lv.style.display='block';
+  const sel=$('#lvcam'); const cur=sel.value;
+  sel.innerHTML=lc.map(c=>`<option value="${c.cam}">${c.cam} · ${c.tracks} track${c.tracks===1?'':'s'}</option>`).join('');
+  sel.value=(cur&&lc.find(c=>c.cam===cur))?cur:lc[0].cam;
+  const c=lc.find(x=>x.cam===sel.value); const age=(Date.now()-c.t)/1000;
+  $('#lvmeta').textContent=`${c.width}×${c.height} analysed frames · ${age<5?'live':'last frame '+age.toFixed(0)+'s ago'} · click to expand`;
+  setLive(sel.value);
+}
+function setLive(cam){const img=$('#lvimg'); if(img.dataset.cam!==cam){img.dataset.cam=cam; img.src='/live.mjpeg?cam='+encodeURIComponent(cam)+'&_='+Date.now();}}
+$('#lvcam').addEventListener('change',()=>setLive($('#lvcam').value));
+$('#lvimg').addEventListener('click',()=>{const cam=$('#lvimg').dataset.cam; if(!cam)return; const dlg=$('#dlg'); dlg.className='dlg theater';
+  dlg.innerHTML=`<div><button class="close" id="closebtn">close</button><img id="theater" src="/live.mjpeg?cam=${encodeURIComponent(cam)}&_=${Date.now()}" alt=""></div>`;
+  $('#modal').classList.add('open'); $('#closebtn').onclick=closeModal;});
+function closeModal(){$('#modal').classList.remove('open');const v=$('#vid');if(v)v.pause();const t=$('#theater');if(t)t.src='';$('#dlg').className='dlg';}
+
+loadStats();loadRules();connectLive();loadLiveCams();setInterval(loadStats,15000);setInterval(loadLiveCams,5000);
+</script>
+</body>
+</html>

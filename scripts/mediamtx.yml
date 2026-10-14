@@ -1,0 +1,16 @@
+# Minimal MediaMTX config for Retrace: cameras and phones in, 10 s fMP4 recordings, playback on :9996.
+playback: yes
+playbackAddress: :9996
+pathDefaults:
+  record: yes
+  recordFormat: fmp4
+  recordSegmentDuration: 10s
+  recordPartDuration: 1s
+  recordPath: ./rec/%path/%s
+  recordDeleteAfter: 48h
+paths:
+  driveway:
+    source: rtsp://user:pass@192.168.1.40:554/h264Preview_01_sub
+    rtspTransport: tcp
+  phone1: {}   # publish from a phone browser at http://<mac>:8889/phone1/publish (HTTPS needed off-localhost)
+  phone2: {}
