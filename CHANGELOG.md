@@ -21,6 +21,9 @@ All notable changes to Retrace are recorded here. The format follows
 - HTTP inputs get `-rw_timeout 20 s`; YouTube media requests carry the User-Agent that yt-dlp
   used.
 - `/ste`: the docs follow ASD-STE100 Simplified Technical English, checked by a bundled script.
+- The in-process EmbeddingGemma 2 path (`--embedder gemma2-native`) builds and runs on Apple
+  Silicon: `vtest.avi` indexed in 2 min 15 s with the model load, searches in 9 to 21 ms after the
+  first query, and Spanish and Telugu queries return the same people as the English query.
 
 ### Changed
 - README, CONTRIBUTING, SECURITY, the landing page and the issue templates are rewritten in

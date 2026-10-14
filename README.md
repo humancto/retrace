@@ -206,7 +206,14 @@ python3 sidecar/embed_server.py --dim 256 &               # downloads the model 
 
 For the in-process path: `scripts/get-gemma.sh` downloads the GGUF files (865 MB), then
 `cargo build --release --features gemma-native` (needs cmake, git, a C++ toolchain, and libclang
-for bindgen).
+for bindgen). The build compiles llama.cpp with Metal on macOS.
+
+Measured on 2026-10-14 (Apple M4 Max): the in-process path indexed `vtest.avi` in 2 min 15 s,
+model load included (the binary is 57 MB). After the first query, a search takes 9 to 21 ms.
+"a person in a red jacket", "una persona con chaqueta roja" (Spanish) and
+"ఎర్ర జాకెట్ వేసుకున్న వ్యక్తి" (Telugu) all return the two people in red jackets in the first
+3 results, with no translation step. "a bicycle" returns the one bicycle. Audio windows need a
+source with sound; the sample video has none.
 
 Captions from a local VLM are optional. Start `llama-server` with a vision model, then run
 `retrace annotate --endpoint http://127.0.0.1:8081/v1`. The captions join the search through BM25.
