@@ -1,0 +1,17 @@
+# Normalise line endings
+* text=auto eol=lf
+*.sh text eol=lf
+*.rs text eol=lf
+*.py text eol=lf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.gif binary
+*.avi binary
+*.mp4 binary
+*.onnx binary
+*.gguf binary
+
+# Keep generated lockfile diffs quiet in PR views
+Cargo.lock -diff linguist-generated

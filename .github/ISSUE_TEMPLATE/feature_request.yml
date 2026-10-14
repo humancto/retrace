@@ -1,0 +1,31 @@
+name: Feature request
+description: A capability Retrace should have.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The question you want to ask your cameras, or the workflow that is awkward today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What Retrace would do, from the user's side of the screen. CLI flags, UI, API shape if you have an opinion.
+    validations:
+      required: true
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Fits the project's constraints
+      options:
+        - label: Works with the network cable pulled (no cloud calls)
+          required: true
+        - label: Uses open weights / open source only
+          required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

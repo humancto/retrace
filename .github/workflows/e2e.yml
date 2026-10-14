@@ -1,0 +1,25 @@
+name: End-to-end
+
+# Indexes a public sample video with real model weights and checks search, clips, rules and eval.
+# Downloads a few hundred MB of weights, so it runs on demand and weekly rather than on every push.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+jobs:
+  e2e:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: ffmpeg
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg; else brew install ffmpeg; fi
+      - run: cargo build --release
+      - run: scripts/e2e.sh

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: https://github.com/humancto/retrace/security/advisories/new
+    about: Please report vulnerabilities privately, not as issues.
+  - name: Questions and ideas
+    url: https://github.com/humancto/retrace/discussions
+    about: Not sure it is a bug? Start a discussion.
