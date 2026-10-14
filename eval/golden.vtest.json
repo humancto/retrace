@@ -1,0 +1,9 @@
+[
+  {"q": "a person in a red jacket", "hits": [21, 30]},
+  {"q": "a white van", "hits": [4, 5, 16]},
+  {"q": "two people walking together", "hits": [7]},
+  {"q": "a bicycle", "hits": [35]},
+  {"q": "person in a white hooded jacket", "hits": [11]},
+  {"q": "a man in a blue jacket", "hits": [31]},
+  {"q": "person in dark clothes", "hits": [1, 2, 3, 8, 17, 18, 25]}
+]
