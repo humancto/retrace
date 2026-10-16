@@ -152,17 +152,74 @@ fn forget_user_agent(url: &str) {
 }
 const YT_VOD_FMT: &str = "bv*[height<=720][vcodec^=avc1]/bv*[height<=720]/b[height<=720]/b";
 
-/// Kills the listed pids with SIGKILL when dropped, unless cleared first. Used for the early
-/// `?` returns in the ingest loop, where the children would otherwise outlive the function.
-struct KillOnDrop(Vec<u32>);
+/// Everything one ingest run starts beside the main thread: the ffmpeg frame pipe, the recorder,
+/// the stall watchdog, and the audio thread. `shutdown` ends them in a fixed order and reaps each
+/// child, so no zombie and no second audio thread survives a run. `Drop` calls `shutdown`, so an
+/// early `?` return in the ingest loop takes the same path as the normal end. Each field is taken
+/// when it is used, so a second `shutdown` does nothing.
+#[derive(Default)]
+struct IngestChildren {
+    ffmpeg: Option<ffmpeg_sidecar::child::FfmpegChild>,
+    recorder: Option<std::process::Child>,
+    /// Dropping the sender wakes the watchdog, which then returns.
+    watchdog_wake: Option<std::sync::mpsc::Sender<()>>,
+    watchdog: Option<std::thread::JoinHandle<()>>,
+    audio: Option<std::thread::JoinHandle<()>>,
+    audio_stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    audio_pid: Option<std::sync::Arc<std::sync::Mutex<Option<u32>>>>,
+    /// Kill the audio ffmpeg on shutdown (live sources); a file source ends by itself.
+    audio_kill: bool,
+    /// Resolved media URL, for `forget_user_agent`.
+    url: Option<String>,
+}
 
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        for pid in self.0.drain(..) {
-            let _ = std::process::Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .status();
+impl IngestChildren {
+    fn shutdown(&mut self) {
+        // 1. The watchdog first, while the ffmpeg pid is still unreaped and cannot be reused.
+        drop(self.watchdog_wake.take());
+        if let Some(h) = self.watchdog.take() {
+            let _ = h.join();
         }
+        // 2. The frame pipe and the recorder: kill, then wait, so neither becomes a zombie.
+        if let Some(mut c) = self.ffmpeg.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        if let Some(mut r) = self.recorder.take() {
+            unregister_child(r.id());
+            let _ = r.kill();
+            let _ = r.wait();
+        }
+        // 3. The audio thread: set the flag, end its ffmpeg on a live source, then join it. The
+        //    thread reaps its own child.
+        if let Some(t) = self.audio.take() {
+            if let Some(stop) = self.audio_stop.take() {
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            if self.audio_kill
+                && let Some(pid) = self
+                    .audio_pid
+                    .take()
+                    .and_then(|p| p.lock().ok().and_then(|p| *p))
+            {
+                let _ = std::process::Command::new("kill")
+                    .arg(pid.to_string())
+                    .status();
+            }
+            let _ = t.join();
+        }
+        self.audio_stop = None;
+        self.audio_pid = None;
+        // 4. The per-URL User-Agent entry, so the map does not grow with each restart.
+        if let Some(url) = self.url.take() {
+            forget_user_agent(&url);
+        }
+    }
+}
+
+impl Drop for IngestChildren {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
@@ -524,25 +581,27 @@ pub fn run_ingest(
         tracing::info!(cam = %opts.cam, "resolved {} -> {}…", opts.source, url.chars().take(60).collect::<String>());
     }
     let rec_dir = opts.rec_dir.join(&opts.cam);
-    let mut recorder = if live && opts.record {
+    let mut children = IngestChildren::default();
+    children.url = Some(url.clone());
+    children.audio_kill = live;
+    if live && opts.record {
         match spawn_recorder(&url, &rec_dir) {
             Ok(c) => {
                 register_child(c.id());
-                Some(c)
+                children.recorder = Some(c);
             }
             Err(e) => {
                 tracing::warn!(cam = %opts.cam, "recorder not started: {e:#}");
-                None
             }
         }
-    } else {
-        None
-    };
+    }
 
     // Audio windows run beside the video pipe when the embedder can hear (EmbeddingGemma 2).
     let audio_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let audio_pid = std::sync::Arc::new(std::sync::Mutex::new(None::<u32>));
-    let audio_thread = if opts.audio && emb.audio && crate::audio::has_audio(&url) {
+    children.audio_stop = Some(audio_stop.clone());
+    children.audio_pid = Some(audio_pid.clone());
+    if opts.audio && emb.audio && crate::audio::has_audio(&url) {
         let ao = crate::audio::AudioOpts {
             url: url.clone(),
             cam: opts.cam.clone(),
@@ -554,8 +613,8 @@ pub fn run_ingest(
             hop_s: 5.0,
             min_rms: 0.004,
         };
-        let (st, pid) = (audio_stop.clone(), audio_pid.clone());
-        Some(
+        let (st, pid) = (audio_stop, audio_pid);
+        children.audio = Some(
             std::thread::Builder::new()
                 .name(format!("audio-{}", opts.cam))
                 .spawn(move || {
@@ -563,10 +622,8 @@ pub fn run_ingest(
                         tracing::warn!(cam = %ao.cam, "audio: {e:#}");
                     }
                 })?,
-        )
-    } else {
-        None
-    };
+        );
+    }
 
     let mut cmd = FfmpegCommand::new();
     cmd.args(["-nostdin"]); // ffmpeg-sidecar sets its own loglevel; it parses stderr to learn the output frame format
@@ -581,22 +638,25 @@ pub fn run_ingest(
         ])
         .rawvideo();
     let mut child = cmd.spawn().context("spawn ffmpeg (is ffmpeg on PATH?)")?;
+    let ffmpeg_pid = child.as_inner().id();
+    children.ffmpeg = Some(child);
 
     // Stall watchdog (live sources). An HTTP/HLS server can keep the connection open and send
     // nothing. ffmpeg then blocks on read, the frame loop never returns, and the restart loop in
     // `run_live_forever` never runs. When no frame arrives for STALL_SECS, kill ffmpeg: the loop
     // ends, the source is resolved again (YouTube media URLs expire), and ffmpeg restarts.
     // The clock is monotonic (an `Instant` origin), so a laptop sleep or an NTP step does not
-    // fire or delay the watchdog. The main thread joins the watchdog before it reaps the child,
-    // so the pid cannot be reused by the time a SIGKILL is sent.
+    // fire or delay the watchdog. `IngestChildren::shutdown` joins the watchdog before it reaps
+    // the child, so the pid cannot be reused by the time a SIGKILL is sent.
     let t_origin = Instant::now();
     let last_frame = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let (wd_tx, wd_rx) = std::sync::mpsc::channel::<()>();
-    let watchdog = if live {
-        let pid = child.as_inner().id();
+    if live {
+        let (wd_tx, wd_rx) = std::sync::mpsc::channel::<()>();
+        children.watchdog_wake = Some(wd_tx);
+        let pid = ffmpeg_pid;
         let last = last_frame.clone();
         let cam = opts.cam.clone();
-        Some(
+        children.watchdog = Some(
             std::thread::Builder::new()
                 .name(format!("stall-{cam}"))
                 .spawn(move || {
@@ -621,16 +681,10 @@ pub fn run_ingest(
                         }
                     }
                 })?,
-        )
-    } else {
-        None
-    };
-    // Any `?` below returns before the normal teardown; this guard kills the children then, while
-    // their pids are still ours (unreaped), so nothing leaks and no reused pid is hit.
-    let mut guard = KillOnDrop(vec![child.as_inner().id()]);
-    if let Some(r) = recorder.as_ref() {
-        guard.0.push(r.id());
+        );
     }
+    // Any `?` below returns before the normal end; `children` is dropped then and runs the same
+    // `shutdown` as the normal path, so nothing leaks and no reused pid is hit.
 
     let mut tracker = Tracker::new(TrackerConfig {
         max_age: (opts.fps * 2.0).max(4.0) as usize,
@@ -738,7 +792,11 @@ pub fn run_ingest(
         Ok(())
     };
 
-    for ev in child.iter()? {
+    let ffmpeg = children
+        .ffmpeg
+        .as_mut()
+        .expect("the ffmpeg child is set above");
+    for ev in ffmpeg.iter()? {
         if let Some(s) = &stop
             && s.load(std::sync::atomic::Ordering::Relaxed)
         {
@@ -1006,7 +1064,7 @@ pub fn run_ingest(
                 }
                 if last_log.elapsed() > Duration::from_secs(5) {
                     last_log = Instant::now();
-                    if recorder.is_some() {
+                    if children.recorder.is_some() {
                         sweep_recordings(&rec_dir, opts.retain_hours);
                     }
                     let fps =
@@ -1020,28 +1078,7 @@ pub fn run_ingest(
             _ => {}
         }
     }
-    drop(wd_tx);
-    if let Some(h) = watchdog {
-        let _ = h.join(); // the child is still unreaped here, so its pid cannot be reused
-    }
-    guard.0.clear();
-    forget_user_agent(&url);
-    let _ = child.kill();
-    let _ = child.wait();
-    if let Some(mut r) = recorder.take() {
-        unregister_child(r.id());
-        let _ = r.kill();
-        let _ = r.wait();
-    }
-    if let Some(t) = audio_thread {
-        audio_stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        if live && let Some(pid) = audio_pid.lock().ok().and_then(|p| *p) {
-            let _ = std::process::Command::new("kill")
-                .arg(pid.to_string())
-                .status();
-        }
-        let _ = t.join();
-    }
+    children.shutdown();
     let mut remaining: Vec<(usize, Track)> = tracks.drain().collect();
     remaining.sort_by_key(|(id, _)| *id);
     for (id, mut tr) in remaining {
@@ -1075,5 +1112,93 @@ pub fn run_live_forever(opts: IngestOpts, stop: std::sync::Arc<std::sync::atomic
         }
         tracing::info!(cam = %opts.cam, "restarting source in {backoff}s");
         std::thread::sleep(Duration::from_secs(backoff));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// True while `pid` is a live or zombie process of ours (a reaped child is neither).
+    #[cfg(unix)]
+    fn process_exists(pid: u32) -> bool {
+        let out = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .expect("run ps");
+        !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn shutdown_reaps_the_recorder_and_forgets_the_user_agent() {
+        let url = "https://rr1.googlevideo.com/test-shutdown-reaps";
+        remember_user_agent(url, "UA/1");
+        assert_eq!(user_agent_args(url)[1], "UA/1");
+
+        let recorder = std::process::Command::new("sleep")
+            .arg("300")
+            .spawn()
+            .expect("spawn sleep");
+        let pid = recorder.id();
+        register_child(pid);
+        assert!(process_exists(pid));
+
+        let mut children = IngestChildren::default();
+        children.recorder = Some(recorder);
+        children.url = Some(url.to_string());
+        children.shutdown();
+
+        // Killed and waited: not running, not a zombie.
+        assert!(
+            !process_exists(pid),
+            "pid {pid} is still present after shutdown"
+        );
+        assert!(
+            !CHILDREN.lock().unwrap().contains(&pid),
+            "recorder pid still registered"
+        );
+        assert_eq!(user_agent_args(url)[1], FALLBACK_USER_AGENT);
+        // A second shutdown, and the drop after it, are no-ops.
+        children.shutdown();
+    }
+
+    #[test]
+    fn drop_runs_the_same_shutdown_as_the_normal_end() {
+        let url = "https://rr2.googlevideo.com/test-drop-forgets";
+        remember_user_agent(url, "UA/2");
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let joined = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let j = joined.clone();
+        let watchdog = std::thread::spawn(move || {
+            // Returns when the sender is dropped, like the real watchdog.
+            let _ = rx.recv();
+            j.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let st = stop.clone();
+        let audio = std::thread::spawn(move || {
+            while !st.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        {
+            let mut children = IngestChildren::default();
+            children.watchdog_wake = Some(tx);
+            children.watchdog = Some(watchdog);
+            children.audio = Some(audio);
+            children.audio_stop = Some(stop.clone());
+            children.url = Some(url.to_string());
+            // Dropped here, as on an early `?` return.
+        }
+        assert!(
+            joined.load(std::sync::atomic::Ordering::SeqCst),
+            "watchdog not joined"
+        );
+        assert!(
+            stop.load(std::sync::atomic::Ordering::Relaxed),
+            "audio stop flag not set"
+        );
+        assert_eq!(user_agent_args(url)[1], FALLBACK_USER_AGENT);
     }
 }
