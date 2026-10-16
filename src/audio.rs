@@ -222,11 +222,13 @@ pub fn run_audio(
             Err(e) => tracing::warn!(cam = %opts.cam, "audio embed failed: {e:#}"),
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    // Clear the published pid before the reap, so a caller cannot signal a pid that the kernel
+    // has already given to another process.
     if let Ok(mut p) = pid.lock() {
         *p = None;
     }
+    let _ = child.kill();
+    let _ = child.wait();
     tracing::info!(cam = %opts.cam, windows = stored, "audio windows done");
     Ok(stored)
 }

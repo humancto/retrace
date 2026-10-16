@@ -1142,11 +1142,11 @@ mod tests {
             .expect("spawn sleep");
         let pid = recorder.id();
         register_child(pid);
-        assert!(process_exists(pid));
-
+        // Owned by `children` before the first assert, so a failed assert cannot leak the child.
         let mut children = IngestChildren::default();
         children.recorder = Some(recorder);
         children.url = Some(url.to_string());
+        assert!(process_exists(pid));
         children.shutdown();
 
         // Killed and waited: not running, not a zombie.
