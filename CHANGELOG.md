@@ -6,6 +6,14 @@ All notable changes to Retrace are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-16
+
+### Fixed
+- Live sources: an error in the ingest loop now ends the ffmpeg frame pipe, the recorder, the
+  stall watchdog and the audio thread the same way as a normal end, and reaps each child. Before,
+  a persistent error (the source restarts every 1 to 30 s) left zombie processes, a second audio
+  thread on the same camera (duplicate audio windows), and one User-Agent entry per restart.
+
 ## [0.4.0] — 2026-10-14
 
 ### Added
@@ -83,6 +91,7 @@ First public release.
 - The UI requested a favicon that did not exist (one console error per page load).
 - Clippy clean-up across the crate (collapsed `if`s, needless borrows, `is_multiple_of`).
 
-[Unreleased]: https://github.com/humancto/retrace/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/humancto/retrace/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/humancto/retrace/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/humancto/retrace/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/humancto/retrace/releases/tag/v0.3.0
