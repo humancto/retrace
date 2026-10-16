@@ -5,7 +5,7 @@ Cloudflare Pages.
 
 ```
 site/
-  index.html          the page (inline CSS, some lines of JS, fonts from Google Fonts)
+  index.html          the page (inline CSS, some lines of JS, fonts from Google Fonts, light and dark)
   assets/             the screenshots and the hero frame (JPEG)
   _headers            cache and security headers for Cloudflare Pages
 ```
