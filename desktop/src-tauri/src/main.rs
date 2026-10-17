@@ -293,21 +293,16 @@ fn cleanup(app: &AppHandle) {
 
 /// Frees the engine (embedder, then index) before the process exits. The EmbeddingGemma embedder
 /// owns llama.cpp Metal buffers; if they are still alive when the C++ static destructors run at
-/// exit, `ggml_metal_device_free` asserts and the process aborts. The server and its open
-/// connections can still hold the state, so free the embedder through its lock first, then drop
-/// the state when (up to 1 s) this is the last holder.
+/// exit, `ggml_metal_device_free` asserts and the process aborts. The server's router and open
+/// connections (the UI's EventSource) can still hold the state, so free the embedder through its
+/// lock instead of waiting for the last holder.
 fn release_engine(e: ctx::Engine) {
     e.state
         .emb
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .release();
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while std::sync::Arc::strong_count(&e.state) > 1 && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let holders = std::sync::Arc::strong_count(&e.state);
-    tracing::info!(holders, "embedder released");
+    tracing::info!("embedder released");
     drop(e);
 }
 
