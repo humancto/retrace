@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retrace Setup</title>
+<style>
+:root{--bg:#0e1319;--panel:#151c24;--line:#25303b;--text:#e7ecef;--muted:#8b98a5;--teal:#3fc1b9;--red:#e06b69;--amber:#e0b15a;
+--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--sans)}
+main{max-width:640px;margin:0 auto;padding:56px 24px 40px}
+.mark{display:flex;align-items:center;gap:12px;margin-bottom:28px}
+.mark span{font-weight:800;letter-spacing:.08em;font-size:18px}
+h1{font-size:26px;margin:0 0 8px;font-weight:700}
+p.lead{color:var(--muted);margin:0 0 28px}
+.phase{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--teal);margin-bottom:10px;min-height:18px}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-bottom:6px}
+.bar i{display:block;height:100%;width:0;background:var(--teal);transition:width .2s}
+.total{font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:22px}
+ul{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+li{display:grid;grid-template-columns:1fr auto;gap:4px 12px;padding:11px 14px;border-top:1px solid var(--line)}
+li:first-child{border-top:0}
+li .name{font-family:var(--mono);font-size:13px;overflow-wrap:anywhere}
+li .size{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right;white-space:nowrap}
+li .bar{grid-column:1/-1;height:3px;margin:0}
+li.done .size{color:var(--teal)}
+li.failed .size{color:var(--red)}
+li.waiting .name{color:var(--muted)}
+.box{border-radius:10px;padding:14px 16px;margin-top:20px;display:none}
+.box.show{display:block}
+.err{border:1px solid var(--red);background:#2a1719}
+.warn{border:1px solid var(--amber);background:#2a2316}
+.box p{margin:0 0 10px;overflow-wrap:anywhere}
+.box p:last-child{margin-bottom:0}
+button{font:600 14px var(--sans);border-radius:8px;padding:8px 16px;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--text);margin-right:8px}
+button.primary{background:var(--teal);border-color:var(--teal);color:#06211f}
+button:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+footer{margin-top:28px;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+  <div class="mark">
+    <svg width="34" height="34" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#151c24"/><path d="M7 23 Q12 9 17 16 T26 9" fill="none" stroke="#3fc1b9" stroke-width="3" stroke-linecap="round"/><circle cx="7" cy="23" r="3" fill="#2f8f5b"/><circle cx="26" cy="9" r="3" fill="#e06b69"/></svg>
+    <span>RETRACE</span>
+  </div>
+  <h1>Set up Retrace</h1>
+  <p class="lead">Retrace downloads the video tools and the AI models one time. After that, Retrace works without an internet connection. Your videos stay on this computer.</p>
+
+  <div class="phase" id="phase" role="status" aria-live="polite">Starting.</div>
+  <div class="bar" aria-hidden="true"><i id="totalbar"></i></div>
+  <div class="total" id="total">&nbsp;</div>
+
+  <ul id="items" aria-label="Files to download"></ul>
+
+  <div class="box warn" id="warn" role="status"><p id="warntext"></p></div>
+
+  <div class="box err" id="err" role="alert">
+    <p><strong>Setup did not complete.</strong></p>
+    <p id="errtext"></p>
+    <p>Make sure that the computer is connected to the internet, then select Try again. Retrace continues from where it stopped.</p>
+    <p>
+      <button class="primary" id="retry">Try again</button>
+      <button id="system" hidden>Use the installed tools</button>
+    </p>
+  </div>
+
+  <footer>You can find the downloaded files with Help &gt; Open Data Folder.</footer>
+</main>
+<script>
+const T = window.__TAURI__;
+const $ = id => document.getElementById(id);
+function fmt(n){
+  if(n >= 1e9) return (n/1e9).toFixed(2) + ' GB';
+  if(n >= 1e6) return (n/1e6).toFixed(1) + ' MB';
+  if(n >= 1e3) return (n/1e3).toFixed(0) + ' KB';
+  return n + ' B';
+}
+const WORD = {waiting:'Waiting', active:'Downloading', done:'Done', failed:'Stopped'};
+function render(v){
+  if(!v) return;
+  $('phase').textContent = v.phase || '';
+  const items = v.items || [];
+  const total = items.reduce((a,i)=>a+i.size,0), done = items.reduce((a,i)=>a+Math.min(i.done,i.size),0);
+  $('totalbar').style.width = total ? (100*done/total).toFixed(1)+'%' : (v.phase==='Ready.'?'100%':'0');
+  $('total').textContent = total ? fmt(done) + ' of ' + fmt(total) : ' ';
+  const ul = $('items');
+  ul.replaceChildren(...items.map(i=>{
+    const li = document.createElement('li'); li.className = i.state;
+    const n = document.createElement('div'); n.className='name'; n.textContent = i.label;
+    const s = document.createElement('div'); s.className='size';
+    s.textContent = i.state==='active' ? fmt(i.done)+' / '+fmt(i.size) : WORD[i.state]+' · '+fmt(i.size);
+    li.append(n,s);
+    if(i.state==='active'){
+      const b=document.createElement('div'); b.className='bar';
+      const f=document.createElement('i'); f.style.width=(i.size?100*i.done/i.size:0).toFixed(1)+'%';
+      b.append(f); li.append(b);
+    }
+    return li;
+  }));
+  $('warn').classList.toggle('show', !!v.warning);
+  $('warntext').textContent = v.warning || '';
+  $('err').classList.toggle('show', !!v.failed);
+  $('errtext').textContent = v.error || '';
+  $('system').hidden = !(v.failed && v.system_tools_found && v.tools === 'download');
+}
+async function boot(){
+  if(!T){ $('phase').textContent = 'This page must open inside the Retrace app.'; return; }
+  await T.event.listen('setup-state', e => render(e.payload));
+  render(await T.core.invoke('setup_state'));
+}
+$('retry').onclick = () => { $('err').classList.remove('show'); T.core.invoke('retry_setup'); };
+$('system').onclick = () => { $('err').classList.remove('show'); T.core.invoke('use_system_tools'); };
+boot();
+</script>
+</body>
+</html>
