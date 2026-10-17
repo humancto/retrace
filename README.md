@@ -38,10 +38,11 @@ Homebrew, Rust or Python.
    [latest GitHub release](https://github.com/humancto/retrace/releases/latest). The build is for
    Apple Silicon and macOS 14 or later.
 2. Open the DMG and drag Retrace to Applications.
-3. Open Retrace. The build has no Apple signature, so macOS blocks it the first time. On macOS 14,
-   right-click the app and select **Open**. On macOS 15 and later, open System Settings > Privacy &
-   Security and click **Open Anyway**. Alternative:
-   `xattr -dr com.apple.quarantine /Applications/Retrace.app`.
+3. Open Retrace.
+
+The build has no Apple signature, so macOS blocks it the first time. On macOS 14, right-click the
+app and select **Open**. On macOS 15 and later, open System Settings > Privacy & Security and click
+**Open Anyway**. Alternative: `xattr -dr com.apple.quarantine /Applications/Retrace.app`.
 
 On the first run, the app downloads ffmpeg, ffprobe, yt-dlp, the detector and the weights of the
 selected embedder. A window shows the progress of each file. With the default embedder, SigLIP 2,
