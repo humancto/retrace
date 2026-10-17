@@ -411,10 +411,16 @@ fn transfer(
     let status = resp.status().as_u16();
     let append = match status {
         206 if have > 0 && content_range_start(&resp) == Some(have) => true,
-        200 | 206 => {
-            // The server ignored the range (or answered another one): start over.
+        200 => {
+            // The server ignored the range: start over from byte 0.
             have = 0;
             false
+        }
+        206 => {
+            // A range that does not start at `have` cannot be appended, and its body does not
+            // start at byte 0 either. Drop the partial file so the next try starts clean.
+            let _ = std::fs::remove_file(part);
+            anyhow::bail!("server answered a different range than bytes={have}-");
         }
         416 => anyhow::bail!("server rejected the resume range at {have} bytes"),
         _ => anyhow::bail!("HTTP {status}"),
@@ -516,6 +522,8 @@ mod tests {
         Corrupt,
         /// Send only the first half of the body, then close.
         Truncate,
+        /// Answer a Range with 206 for a range that starts 1000 bytes before the one asked for.
+        WrongRange,
     }
 
     struct Server {
@@ -555,6 +563,13 @@ mod tests {
                         .trim_end_matches('-')
                         .parse::<usize>()
                         .unwrap(),
+                    (Mode::WrongRange, Some(r)) => {
+                        r.trim_start_matches("bytes=")
+                            .trim_end_matches('-')
+                            .parse::<usize>()
+                            .unwrap()
+                            - 1000
+                    }
                     _ => 0,
                 };
                 let slice = &data[start..];
@@ -660,6 +675,21 @@ mod tests {
         std::fs::write(f.part_path(), vec![0xAAu8; 50_000]).unwrap();
         download(&agent(), &f, &mut |_| {}).unwrap();
         assert_eq!(std::fs::read(&f.dest).unwrap(), data);
+    }
+
+    #[test]
+    fn wrong_range_fails_and_drops_part() {
+        let data = body();
+        let srv = serve(data.clone(), Mode::WrongRange);
+        let t = tempfile::tempdir().unwrap();
+        // Unpinned: without the range check a body of the right length would be accepted.
+        let f = file_for(t.path(), &srv.url, &data, false);
+        std::fs::create_dir_all(f.dest.parent().unwrap()).unwrap();
+        std::fs::write(f.part_path(), &data[..100_000]).unwrap();
+        let err = download(&agent(), &f, &mut |_| {}).unwrap_err();
+        assert!(format!("{err:#}").contains("different range"), "{err:#}");
+        assert!(!f.dest.exists());
+        assert!(!f.part_path().exists());
     }
 
     #[test]
