@@ -236,7 +236,9 @@ extra libraries (`otool -L` shows system libraries only).
 
 On macOS, `crates/llama-embed/build.rs` always compiles llama.cpp with Metal and with generic CPU code
 (`GGML_NATIVE=OFF`), so the app runs on all Apple Silicon Macs. On Linux it compiles for the CPU of the build
-machine (`GGML_NATIVE=ON`). CI sets `LLAMA_NATIVE=0`, but `build.rs` does not read this variable yet.
+machine (`GGML_NATIVE=ON`). Set `LLAMA_NATIVE=0` to compile generic CPU code (`GGML_NATIVE=OFF`) for a binary
+that runs on other machines. The desktop CI workflow sets `LLAMA_NATIVE=0`, so the Linux AppImage and deb run on
+older x86_64 CPUs too.
 
 The root CLI build does not change: `cargo build --release` makes the `retrace` binary, and `scripts/e2e.sh`
 passes.
