@@ -15,6 +15,7 @@ mod worker;
 
 use ctx::Ctx;
 use std::path::{Path, PathBuf};
+use std::sync::PoisonError;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use tauri::webview::DownloadEvent;
@@ -63,9 +64,11 @@ fn use_system_tools(app: AppHandle) {
     setup::start(&app);
 }
 
+/// Async, so Tauri runs it off the main thread: the stream check can run yt-dlp for seconds
+/// (or download a whole video) and the window must not freeze.
 #[tauri::command]
-fn add_camera(app: AppHandle, name: String, url: String) -> Result<(), String> {
-    worker::add_camera(&app, &name, &url)?;
+async fn add_camera(app: AppHandle, name: String, url: String) -> Result<(), String> {
+    worker::add_camera(&app, &name, &url).await?;
     if let Some(w) = app.get_webview_window("camera") {
         let _ = w.close();
     }
@@ -84,7 +87,7 @@ fn main() {
         eprintln!("retrace: cannot create {}: {e}", paths.root.display());
         std::process::exit(1);
     }
-    let _log_guard = logging::init(&paths.logs);
+    let log_guard = logging::init(&paths.logs);
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         root = %paths.root.display(),
@@ -98,6 +101,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let opens = parse_open_args(&args, &cwd);
     let ctx = Ctx::new(paths, settings);
+    *ctx.log_guard.lock().unwrap_or_else(PoisonError::into_inner) = Some(log_guard);
     for p in opens {
         ctx.open_file(p);
     }
@@ -245,7 +249,12 @@ fn request_quit(app: &AppHandle) {
     let spawned = std::thread::Builder::new()
         .name("quit".into())
         .spawn(move || {
-            cleanup(&a);
+            // Exit even if cleanup panics: otherwise quit_done stays false, every later
+            // ExitRequested is held, and only a force kill ends the app.
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cleanup(&a))).is_err() {
+                tracing::error!("cleanup panicked; exiting anyway");
+            }
+            a.state::<Ctx>().quit_done.store(true, Ordering::SeqCst);
             a.exit(0);
         });
     if let Err(e) = spawned {
@@ -273,7 +282,12 @@ fn cleanup(app: &AppHandle) {
         let _ = w.navigate(blank);
     }
     let deadline = Instant::now() + Duration::from_secs(3);
-    let threads = std::mem::take(&mut *ctx.threads.lock().unwrap());
+    // An engine start that is still loading the embedder checks `stop` when the load returns
+    // and frees it itself; give it until the deadline so it does not race the exit.
+    while ctx.setup_running.load(Ordering::SeqCst) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let threads = std::mem::take(&mut *ctx.threads.lock().unwrap_or_else(PoisonError::into_inner));
     for (name, done) in threads {
         let left = deadline.saturating_duration_since(Instant::now());
         if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = done.recv_timeout(left) {
@@ -281,7 +295,11 @@ fn cleanup(app: &AppHandle) {
         }
     }
     retrace::ingest::kill_children();
-    let engine = ctx.engine.lock().unwrap().take();
+    let engine = ctx
+        .engine
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
     if let Some(e) = engine {
         e.shutdown.trigger();
         release_engine(e);
@@ -289,6 +307,13 @@ fn cleanup(app: &AppHandle) {
     kill_child_processes();
     ctx.quit_done.store(true, Ordering::SeqCst);
     tracing::info!("quit complete");
+    // `App::run` exits the process, so drop the log guard here to flush the last lines.
+    drop(
+        ctx.log_guard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take(),
+    );
 }
 
 /// Frees the engine (embedder, then index) before the process exits. The EmbeddingGemma embedder
@@ -300,21 +325,26 @@ fn release_engine(e: ctx::Engine) {
     e.state
         .emb
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or_else(PoisonError::into_inner)
         .release();
     tracing::info!("embedder released");
     drop(e);
 }
 
-/// Ends every direct child of this process (ffmpeg pipes, yt-dlp) that is still running:
-/// SIGTERM, up to 1 s grace, then SIGKILL.
+/// Process names of the helpers the engine starts. pgrep/pkill AND this pattern with `-P`, so
+/// other children (WebKitGTK's web and network processes on Linux) are left alone.
+#[cfg(unix)]
+const HELPERS: &str = "^(ffmpeg|ffprobe|yt-dlp)";
+
+/// Ends every direct child of this process that is an engine helper (ffmpeg pipes, yt-dlp) and
+/// is still running: SIGTERM, up to 1 s grace, then SIGKILL.
 fn kill_child_processes() {
     #[cfg(unix)]
     {
         let pid = std::process::id().to_string();
         let has_children = || {
             std::process::Command::new("pgrep")
-                .args(["-P", &pid])
+                .args(["-P", &pid, HELPERS])
                 .stdout(std::process::Stdio::null())
                 .status()
                 .map(|s| s.success())
@@ -324,7 +354,7 @@ fn kill_child_processes() {
             return;
         }
         let _ = std::process::Command::new("pkill")
-            .args(["-TERM", "-P", &pid])
+            .args(["-TERM", "-P", &pid, HELPERS])
             .status();
         let until = Instant::now() + Duration::from_secs(1);
         while has_children() && Instant::now() < until {
@@ -333,7 +363,7 @@ fn kill_child_processes() {
         if has_children() {
             tracing::warn!("child processes left after SIGTERM; sending SIGKILL");
             let _ = std::process::Command::new("pkill")
-                .args(["-KILL", "-P", &pid])
+                .args(["-KILL", "-P", &pid, HELPERS])
                 .status();
         }
     }

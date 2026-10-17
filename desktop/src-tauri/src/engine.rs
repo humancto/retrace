@@ -10,7 +10,7 @@ use tauri::{AppHandle, Manager};
 /// Loads the index and the embedder (blocking work on a blocking thread), serves, navigates.
 pub async fn start(app: &AppHandle) -> Result<()> {
     let ctx = app.state::<Ctx>();
-    if ctx.engine.lock().unwrap().is_some() {
+    if ctx.stop.load(Ordering::SeqCst) || ctx.engine.lock().unwrap().is_some() {
         return Ok(());
     }
     let paths = ctx.paths.clone();
@@ -38,6 +38,17 @@ pub async fn start(app: &AppHandle) -> Result<()> {
     })
     .await
     .map_err(|e| anyhow::anyhow!("engine start stopped: {e}"))??;
+    if ctx.stop.load(Ordering::SeqCst) {
+        // A quit came during the load. Free the embedder now (llama.cpp Metal buffers must not
+        // outlive the C++ static destructors at exit) and do not serve.
+        state
+            .emb
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .release();
+        tracing::info!("quit during engine start: embedder released");
+        return Ok(());
+    }
     let state = Arc::new(state);
 
     let (addr, handle) = retrace::api::bind(state.clone(), "127.0.0.1:0")?;

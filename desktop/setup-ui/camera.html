@@ -19,12 +19,13 @@ input:focus{outline:2px solid var(--teal);outline-offset:0}
 button{font:600 14px var(--sans);border-radius:8px;padding:8px 16px;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--text)}
 button.primary{background:var(--teal);border-color:var(--teal);color:#06211f}
 #err{color:var(--red);min-height:20px;margin:10px 0 0;overflow-wrap:anywhere}
+#err.busy{color:var(--muted)}
 </style>
 </head>
 <body>
 <form id="f">
   <h1>Add a camera</h1>
-  <p>Retrace watches a live stream and indexes it. The stream stays on this computer.</p>
+  <p>Retrace watches a live stream and indexes it. The stream stays on this computer. If the address is a video and not a live stream, Retrace indexes the video one time.</p>
   <label for="name">Name</label>
   <input id="name" required maxlength="40" placeholder="front-door" autocomplete="off">
   <label for="url">Stream address</label>
@@ -41,9 +42,9 @@ const $ = id => document.getElementById(id);
 $('cancel').onclick = () => T.window.getCurrentWindow().close();
 $('f').onsubmit = async e => {
   e.preventDefault();
-  $('err').textContent = ''; $('add').disabled = true;
+  $('err').className = 'busy'; $('err').textContent = 'Checking the stream\u2026'; $('add').disabled = true;
   try { await T.core.invoke('add_camera', {name: $('name').value, url: $('url').value}); }
-  catch(x){ $('err').textContent = String(x); }
+  catch(x){ $('err').className = ''; $('err').textContent = String(x); }
   finally { $('add').disabled = false; }
 };
 $('name').focus();
