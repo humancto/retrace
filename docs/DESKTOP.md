@@ -18,8 +18,8 @@ embedder. A window shows the progress of each download. After setup, the app sho
 window.
 
 These first-run downloads use the network. Video URLs and camera URLs that you enter also use the network.
-Caution: the UI page (`ui/index.html`) still loads its fonts from Google Fonts. The engine does not send video,
-queries or results to the network.
+The UI uses the system fonts and loads nothing from the network. The engine does not send video, queries or
+results to the network.
 
 ## Install
 
