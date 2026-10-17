@@ -241,11 +241,7 @@ fn progress_cb(app: &AppHandle, offset: usize) -> impl FnMut(&retrace::models::P
     move |p| {
         let i = offset + p.index;
         let complete = p.file_done >= p.file.size;
-        let decile = if p.file.size == 0 {
-            10
-        } else {
-            p.file_done * 10 / p.file.size
-        };
+        let decile = (p.file_done * 10).checked_div(p.file.size).unwrap_or(10);
         if last_logged.0 != i || decile > last_logged.1 {
             tracing::info!(
                 file = %p.file.label,
