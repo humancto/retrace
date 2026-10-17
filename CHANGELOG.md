@@ -13,6 +13,14 @@ All notable changes to Retrace are recorded here. The format follows
 - Automatic updates for the desktop app.
 - A live indicator in the menu bar.
 - One shared embedder for ingest, audio and search, to use less memory.
+- Bundle the licence notices of the compiled Rust crates (`cargo about`) in the app and show them
+  in Help > Third-Party Software.
+- Unique camera names for files with the same name in different folders (today `/a/clip.mp4` and
+  `/b/clip.mp4` both index as camera `clip`).
+- A marker file with the pinned sha256 for each installed tool, so the app checks more than the
+  file size and the file type.
+- Wait for an ingest that still runs its own EmbeddingGemma 2 embedder after the 3 s quit deadline,
+  so its llama.cpp buffers are freed before exit.
 
 ## [0.5.0] — 2026-10-17
 
@@ -28,8 +36,11 @@ All notable changes to Retrace are recorded here. The format follows
   **Try again** and **Use the installed tools** are on the setup page.
 - **File > Open Video…**, drag and drop, Finder "Open With" and `--open <file>` add a video to a
   queue that indexes one file at a time. The window title shows the indexing progress.
-- **File > Add Camera…** adds a live source. **Help** opens the data folder, the GitHub page and
-  the third-party software list.
+- **File > Add Camera…** adds a live source. The stream check runs off the main thread, so the
+  window does not stop. If the address is a video and not a live stream (for example a YouTube
+  video that is not live), the app indexes it one time on the file queue. Two live cameras cannot
+  have the same name. **Help** opens the data folder, the GitHub page and the third-party
+  software list.
 - All app data is in `~/Library/Application Support/com.humancto.retrace/`, with one index and one
   crops folder for each embedder. `RETRACE_APP_DATA`, `RETRACE_SETUP`, `RETRACE_MODELS_SEED`,
   `RETRACE_DOWNLOAD_DIR` and `RETRACE_LOG_STDERR` control unattended runs.
@@ -44,7 +55,10 @@ All notable changes to Retrace are recorded here. The format follows
   not change: `scripts/e2e.sh` passes with recall@5 0.952 and mAP 0.946.
 - A tools resolver (`src/tools.rs`) finds ffmpeg, ffprobe and yt-dlp in this order: the app tools
   folder, the folder of the executable, `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`. Each call to
-  these tools goes through it, and yt-dlp always gets `--ffmpeg-location`.
+  these tools goes through it. For the CLI, the new parts are the folder of the executable before
+  `PATH` and the two Homebrew folders after it. In the desktop app, yt-dlp also gets
+  `--ffmpeg-location`; the CLI does not add it.
+- `serve` logs the address it bound, not the address string it was given.
 - `api::bind` binds the port first and returns a handle that stops the server cleanly. `serve`
   uses it.
 - The engine records the frame-pipe ffmpeg, the audio ffmpeg, yt-dlp and the clip ffmpeg as child
