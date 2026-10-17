@@ -53,7 +53,13 @@ One worker thread does the ingest work, one file at a time. This limits memory u
 A second launch sends its files to the first instance.
 
 When you quit, the app stops the ingest, waits up to 3 seconds for the threads, stops all child processes and
-stops the server. Then it kills any child process that is still running.
+stops the server. Then it frees the embedder and kills any child process that is still running. The embedder
+must be freed before the process exits: EmbeddingGemma keeps llama.cpp Metal buffers, and llama.cpp aborts at
+exit if they are still allocated. An ingest that a quit stops is logged as "stopped before the end"; it is not
+counted as done.
+
+While the app indexes a file, the window title shows `Indexing <file>…`. When the file is done, the title
+shows the number of tracklets that it added.
 
 ## Data layout
 
@@ -135,6 +141,24 @@ on older CPUs.
 
 The root CLI build does not change: `cargo build --release` makes the `retrace` binary, and `scripts/e2e.sh`
 passes.
+
+## Memory
+
+Peak resident memory (RSS) for one `--open` of the sample `vtest.avi` with `gemma2-native` selected is about
+2.4 GiB (2,494,944 KB, sampled with `ps -o rss` once per second, macOS arm64). The engine loads one
+embedder and each ingest loads its own detector and embedder. For this reason, one worker indexes one file at
+a time.
+
+## Manual check: download handler (owner step)
+
+Automated tests cover the download policy only. A person must do this check one time per release, with a real
+click. Do not use synthetic mouse or keyboard events.
+
+1. Start the app with a temporary download folder:
+   `RETRACE_DOWNLOAD_DIR=/tmp/retrace-dl Retrace.app/Contents/MacOS/Retrace`.
+2. Search for a result, open a tracklet and click **Download clip**.
+3. Make sure that the clip is in `/tmp/retrace-dl` and that `logs/retrace.log.*` contains
+   `download finished`.
 
 ## Signing
 
