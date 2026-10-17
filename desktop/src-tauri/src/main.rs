@@ -24,20 +24,31 @@ use tauri::{
 };
 use tauri_plugin_opener::OpenerExt;
 
-/// `--open <file>` (repeatable) and `--open=<file>`; relative paths resolve against `cwd`.
-/// Other arguments (macOS adds `-psn_…`) are ignored.
+/// `--open <file>` (repeatable), `--open=<file>`, and bare arguments that name an existing file
+/// (a Linux file association, `Retrace video.mp4`, or a second launch forwarded by the
+/// single-instance plugin). Relative paths resolve against `cwd`. Other flags (macOS adds
+/// `-psn_…`) and bare arguments that are not files are ignored.
 pub fn parse_open_args(args: &[String], cwd: &Path) -> Vec<PathBuf> {
+    let abs = |v: &str| {
+        let p = PathBuf::from(v);
+        if p.is_absolute() { p } else { cwd.join(p) }
+    };
     let mut out = Vec::new();
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
-        let v = if a == "--open" {
-            it.next().cloned()
-        } else {
-            a.strip_prefix("--open=").map(str::to_string)
-        };
-        if let Some(v) = v.filter(|v| !v.is_empty()) {
-            let p = PathBuf::from(v);
-            out.push(if p.is_absolute() { p } else { cwd.join(p) });
+        if a == "--open" {
+            if let Some(v) = it.next().filter(|v| !v.is_empty()) {
+                out.push(abs(v));
+            }
+        } else if let Some(v) = a.strip_prefix("--open=") {
+            if !v.is_empty() {
+                out.push(abs(v));
+            }
+        } else if !a.is_empty() && !a.starts_with('-') {
+            let p = abs(a);
+            if p.is_file() {
+                out.push(p);
+            }
         }
     }
     out
@@ -151,13 +162,21 @@ fn main() {
             use_download_tools,
             add_camera
         ])
-        .on_window_event(|window, event| {
-            if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
+        .on_window_event(|window, event| match event {
+            WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) => {
                 let ctx = window.state::<Ctx>();
                 for p in paths {
                     ctx.open_file(p.clone());
                 }
             }
+            // Closing the main window quits the app, also while the Add Camera window is open:
+            // otherwise the app keeps running with no way to show the main window again. The
+            // window stays open until cleanup has moved it off the engine page.
+            WindowEvent::CloseRequested { api, .. } if window.label() == "setup" => {
+                api.prevent_close();
+                request_quit(window.app_handle());
+            }
+            _ => {}
         })
         .setup(|app| {
             build_main_window(app.handle())?;
@@ -459,5 +478,26 @@ mod tests {
         );
         assert!(parse_open_args(&s(&["Retrace", "--open"]), cwd).is_empty());
         assert!(parse_open_args(&s(&["Retrace"]), cwd).is_empty());
+    }
+
+    #[test]
+    fn bare_file_args() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("v.mp4"), b"x").unwrap();
+        let abs = t.path().join("v.mp4").to_string_lossy().into_owned();
+        assert_eq!(
+            parse_open_args(
+                &s(&[
+                    "Retrace",
+                    "v.mp4",
+                    &abs,
+                    "missing.mp4",
+                    "-psn_0_1",
+                    "--flag"
+                ]),
+                t.path()
+            ),
+            vec![t.path().join("v.mp4"), t.path().join("v.mp4")]
+        );
     }
 }
