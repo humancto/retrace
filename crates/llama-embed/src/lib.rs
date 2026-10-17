@@ -12,6 +12,8 @@
     dead_code
 )]
 
+// bindgen output keeps C names such as `FILE`.
+#[allow(clippy::upper_case_acronyms)]
 mod ffi {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
