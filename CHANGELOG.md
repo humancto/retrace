@@ -17,15 +17,15 @@ All notable changes to Retrace are recorded here. The format follows
   in Help > Third-Party Software.
 - Unique camera names for files with the same name in different folders (today `/a/clip.mp4` and
   `/b/clip.mp4` both index as camera `clip`).
-- A marker file with the pinned sha256 for each installed tool, so the app checks more than the
-  file size and the file type.
-- Wait for an ingest that still runs its own EmbeddingGemma 2 embedder after the 3 s quit deadline,
-  so its llama.cpp buffers are freed before exit.
-- A Tools item in the app menu to change between the downloaded and the installed video tools.
-  Today, when the tool download fails and the models are present, setup shows **Use the installed
-  tools** with the warning, but the window goes to the engine page one or two seconds later.
-- Give the quit thread join its own time budget. Today the wait for a running setup and the thread
-  joins share one 3 s deadline.
+- A Tools item in the app menu to change between the downloaded and the installed video tools at
+  any time. Today the setup page offers **Use the installed tools** (on a failure or a tool
+  warning) and **Download the tools** (when setup with the installed tools fails).
+- Wait longer for an ingest or live thread that still runs its own EmbeddingGemma 2 embedder at
+  quit. Today the app waits 3 s for each thread and then exits with `_exit`, so the process does
+  not abort, but the ingest does not finish its last batch.
+- Pin the third-party GitHub Actions in `desktop.yml` to commit SHAs.
+- Check the clip download (`download=` links) in the built app with a real click, and record a
+  relaunch with the network off. Today a person must do these two checks (see the PR test plan).
 
 ## [0.5.0] — 2026-10-17
 
@@ -74,6 +74,26 @@ All notable changes to Retrace are recorded here. The format follows
 - With tracklets in the index and no query, the UI tells how many tracklets and cameras are
   indexed, not "No index yet". With an empty index, the desktop app tells you how to add a
   video (Cmd+O, or drop the file on the window).
+
+### Fixed (review of PR #3)
+- A download that stalls no longer blocks setup for ever. Each request has a 120 s body time; a
+  request that ends early keeps its bytes and the next request continues with a Range. Three
+  requests in a row with no new bytes stop the download with an error and **Try again**.
+- A 416 answer to a resume request deletes the partial file, so the next try starts from byte 0.
+- `LLAMA_NATIVE=0` now compiles llama.cpp with generic CPU code (`GGML_NATIVE=OFF`) on Linux. The
+  desktop CI sets it, so the Linux AppImage and deb run on older x86_64 CPUs.
+- The desktop app starts each helper (ffmpeg, yt-dlp) in its own process group, and a quit ends
+  the whole group, so the children that yt-dlp starts also stop. The CLI does not change.
+- Quit waits up to 10 s for a running setup step and then up to 3 s for each thread. If something
+  does not stop in time, the app exits with `_exit`, so llama.cpp does not abort at exit.
+- Setup stays usable after a panic. If you change the tool source while setup runs, the change
+  applies when the current run ends. When the engine does not start, the app checks the model files and deletes
+  the damaged ones, so **Try again** downloads them again.
+- The yt-dlp notice now says that the standalone binary is GPL-3.0-or-later (its source is under
+  The Unlicense). The notice also lists usls.
+- A new pinned ffmpeg build replaces an installed one (a sha256 stamp in `bin/`).
+- Finder lists Retrace under **Open With** for common video types. The bundled setup pages have a
+  strict CSP. The app keeps 14 days of logs. A clip download never replaces an existing file.
 
 ### Known limitations
 - The builds have an ad-hoc signature only. Apple does not notarize them. On macOS 14, right-click
