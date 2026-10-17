@@ -100,6 +100,17 @@ async fn run_once(app: &AppHandle) {
         Ok(r) => r,
         Err(e) => Err(anyhow::anyhow!("setup stopped: {e}")),
     };
+    let ctx = app.state::<Ctx>();
+    if ctx.stop.load(Ordering::SeqCst) {
+        // A quit: no engine start and no error view. A partial download stays as `.part`.
+        match res {
+            Err(e) if !retrace::models::fetch::is_cancelled(&e) => {
+                tracing::info!("setup ended during quit: {e:#}")
+            }
+            _ => tracing::info!("setup stopped for quit"),
+        }
+        return;
+    }
     let res = match res {
         Ok(()) => match crate::engine::start(app).await {
             Ok(()) => Ok(()),
@@ -178,11 +189,12 @@ fn phase(app: &AppHandle, text: &str) {
 fn prepare(app: &AppHandle) -> Result<()> {
     let ctx = app.state::<Ctx>();
     let paths = ctx.paths.clone();
-    let mut settings = ctx
+    let settings = ctx
         .settings
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
+    let stop: &AtomicBool = &ctx.stop;
     paths.create()?;
     tools::write_notices(&paths.root, &paths.bin)?;
 
@@ -216,9 +228,11 @@ fn prepare(app: &AppHandle) -> Result<()> {
                 // Record the paths only. `settings.tools` keeps the stored choice: with
                 // RETRACE_SETUP=system the mode is an override for this run, not a new default
                 // ("Use the installed tools" saves the choice itself).
-                settings.system_tools = Some(st);
-                let _ = settings.save(&paths.settings);
-                *ctx.settings.lock().unwrap_or_else(PoisonError::into_inner) = settings.clone();
+                // Change only this field, under the lock, so a change made while setup runs
+                // (such as the last folder of Open Video) is kept.
+                let mut s = ctx.settings.lock().unwrap_or_else(PoisonError::into_inner);
+                s.system_tools = Some(st);
+                let _ = s.save(&paths.settings);
             }
             vec![]
         }
@@ -247,20 +261,24 @@ fn prepare(app: &AppHandle) -> Result<()> {
     let mut tool_err = None;
     if !tool_files.is_empty() {
         phase(app, "Downloading the video tools.");
-        let r = retrace::models::fetch::prefetch_files(&tool_files, progress_cb(app, 0)).and_then(
-            |_| {
-                for (asset, file) in &tool_plan {
-                    tools::install(&paths.bin, asset, &file.dest)?;
-                }
-                Ok(())
-            },
-        );
+        let r = retrace::models::fetch::prefetch_files_until(
+            &tool_files,
+            Some(stop),
+            progress_cb(app, 0),
+        )
+        .and_then(|_| {
+            for (asset, file) in &tool_plan {
+                tools::install(&paths.bin, asset, &file.dest)?;
+            }
+            Ok(())
+        });
         if let Err(e) = r {
             tool_err = Some(e);
         }
     }
     match tool_err {
         None => check_tools(app, &paths.bin),
+        Some(e) if retrace::models::fetch::is_cancelled(&e) => return Err(e),
         Some(e) => {
             // Without tools, search still works on an existing index: go on if weights are present.
             if model_plan.iter().all(ModelFile::is_present) {
@@ -280,8 +298,12 @@ fn prepare(app: &AppHandle) -> Result<()> {
     if model_plan.iter().any(|f| !f.is_present()) {
         phase(app, "Downloading the AI models.");
     }
-    retrace::models::fetch::prefetch_files(&model_plan, progress_cb(app, tool_files.len()))
-        .context("download the AI models")?;
+    retrace::models::fetch::prefetch_files_until(
+        &model_plan,
+        Some(stop),
+        progress_cb(app, tool_files.len()),
+    )
+    .context("download the AI models")?;
     phase(app, "Starting the search engine.");
     Ok(())
 }
