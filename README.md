@@ -29,6 +29,39 @@ person on the frame and finds other visits of the same person. A **rule** is a q
 Retrace asks again for each new tracklet, so it can send an alert while the person is still in
 the frame. Everything runs on your computer with open weights.
 
+## Desktop app
+
+Retrace Desktop is the same engine in a native macOS window. You do not need a terminal,
+Homebrew, Rust or Python.
+
+1. Download `Retrace_0.5.0_aarch64.dmg` from the
+   [latest GitHub release](https://github.com/humancto/retrace/releases/latest). The build is for
+   Apple Silicon and macOS 14 or later.
+2. Open the DMG and drag Retrace to Applications.
+3. Open Retrace. The build has no Apple signature, so macOS blocks it the first time. On macOS 14,
+   right-click the app and select **Open**. On macOS 15 and later, open System Settings > Privacy &
+   Security and click **Open Anyway**. Alternative:
+   `xattr -dr com.apple.quarantine /Applications/Retrace.app`.
+
+On the first run, the app downloads ffmpeg, ffprobe, yt-dlp, the detector and the weights of the
+selected embedder. A window shows the progress of each file. With the default embedder, SigLIP 2,
+the download is about 1.7 GB (1,671,494,078 bytes in our test). Then the app shows the search UI.
+
+To index a video, select **File > Open Video…** or drag the video into the window. The window
+title shows the indexing progress.
+
+The app keeps all its data in `~/Library/Application Support/com.humancto.retrace/`: the tools,
+the weights, one index for each embedder, the logs and `settings.json`. It does not use the
+`usls` cache of the CLI.
+
+The app contains both embedders:
+
+- `siglip2-b16-256` (the default).
+- `gemma2-native`, EmbeddingGemma 2 in the process. To use it, set `"embedder": "gemma2-native"`
+  in `settings.json` and start the app again. The app then downloads the GGUF files (865 MB).
+
+Read [docs/DESKTOP.md](docs/DESKTOP.md) for the architecture, the build and the signing steps.
+
 ## Quick start
 
 You need macOS (Apple Silicon) or Linux, Rust 1.88 or later, and ffmpeg.
