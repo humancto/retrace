@@ -46,3 +46,6 @@ venv/
 
 # Secondary cargo target (gemma-native build)
 /target-gemma
+
+# Desktop app cargo target
+/target-desktop
