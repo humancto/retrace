@@ -356,13 +356,25 @@ pub fn prefetch_files(
     Ok(files.iter().map(|f| f.dest.clone()).collect())
 }
 
+/// Longest time one HTTP request may spend on a body. A transfer that takes longer (a big file
+/// on a slow line) or that stalls (a dropped Wi-Fi link that sends no RST) ends the round, and
+/// [`transfer`] asks again from the bytes it has, so a stalled socket never blocks for ever.
+const BODY_ROUND: Duration = Duration::from_secs(120);
+/// Rounds in a row that add no bytes before a download stops with an error.
+const MAX_IDLE_ROUNDS: u32 = 3;
+
 fn agent() -> ureq::Agent {
+    agent_with(BODY_ROUND)
+}
+
+/// `round` bounds the whole body of one request (ureq's `timeout_recv_body` is a total time for
+/// the body, not a time per read).
+fn agent_with(round: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
         // 206/416 are answers to handle, not errors.
         .http_status_as_error(false)
         .timeout_connect(Some(Duration::from_secs(30)))
-        // Per read, not per file: a 1 GB file may take minutes.
-        .timeout_recv_body(None)
+        .timeout_recv_body(Some(round))
         .timeout_recv_response(Some(Duration::from_secs(60)))
         .proxy(ureq::Proxy::try_from_env())
         .build()
@@ -403,20 +415,66 @@ pub fn download(
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("download failed")))
 }
 
-/// Brings `part` to `file.size` bytes, resuming with a Range request when it already has some.
+/// Brings `part` to `file.size` bytes. Each round is one request that resumes with a Range from
+/// the bytes already on disk. A round that ends early (a read error, a timeout, a short body)
+/// keeps its bytes; the next round goes on from there. The download stops with an error after
+/// [`MAX_IDLE_ROUNDS`] rounds in a row that add nothing.
 fn transfer(
     agent: &ureq::Agent,
     file: &ModelFile,
     part: &Path,
     on_bytes: &mut dyn FnMut(u64),
 ) -> Result<()> {
+    let mut idle = 0;
+    loop {
+        let before = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
+        let round = transfer_round(agent, file, part, on_bytes)?;
+        let after = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
+        match round {
+            Round::Complete => return Ok(()),
+            Round::Partial(why) => {
+                if after > before {
+                    idle = 0;
+                } else {
+                    idle += 1;
+                }
+                if idle >= MAX_IDLE_ROUNDS {
+                    anyhow::bail!(
+                        "the download stopped at {after} of {} bytes: {why} (run again to resume)",
+                        file.size
+                    );
+                }
+                tracing::warn!(
+                    file = %file.label,
+                    have = after,
+                    "download round ended early ({why}); asking again from byte {after}"
+                );
+            }
+        }
+    }
+}
+
+/// How one request ended.
+enum Round {
+    /// `part` has `file.size` bytes.
+    Complete,
+    /// The body ended early; `part` keeps what arrived.
+    Partial(String),
+}
+
+fn transfer_round(
+    agent: &ureq::Agent,
+    file: &ModelFile,
+    part: &Path,
+    on_bytes: &mut dyn FnMut(u64),
+) -> Result<Round> {
     let mut have = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
     if have > file.size {
         std::fs::remove_file(part)?;
         have = 0;
     }
     if have == file.size {
-        return Ok(()); // complete; verify decides
+        return Ok(Round::Complete); // verify decides
     }
     let mut req = agent.get(&file.url);
     if have > 0 {
@@ -437,7 +495,12 @@ fn transfer(
             let _ = std::fs::remove_file(part);
             anyhow::bail!("server answered a different range than bytes={have}-");
         }
-        416 => anyhow::bail!("server rejected the resume range at {have} bytes"),
+        416 => {
+            // The server will refuse the same range again: drop the part file so the next try
+            // starts from byte 0.
+            let _ = std::fs::remove_file(part);
+            anyhow::bail!("server rejected the resume range at {have} bytes");
+        }
         _ => anyhow::bail!("HTTP {status}"),
     };
     let mut out = std::fs::OpenOptions::new()
@@ -454,12 +517,20 @@ fn transfer(
     let mut body = resp.into_body();
     let mut reader = body.as_reader();
     let mut buf = vec![0u8; 256 * 1024];
+    let mut ended = None;
     loop {
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        out.write_all(&buf[..n])?;
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            // A network error or the round timeout: keep the bytes, the next round resumes.
+            Err(e) => {
+                ended = Some(e.to_string());
+                break;
+            }
+        };
+        out.write_all(&buf[..n])
+            .with_context(|| format!("write {}", part.display()))?;
         have += n as u64;
         anyhow::ensure!(
             have <= file.size,
@@ -469,12 +540,12 @@ fn transfer(
         on_bytes(have);
     }
     out.sync_all()?;
-    anyhow::ensure!(
-        have == file.size,
-        "connection ended at {have} of {} bytes (run again to resume)",
-        file.size
-    );
-    Ok(())
+    if have == file.size {
+        return Ok(Round::Complete);
+    }
+    Ok(Round::Partial(ended.unwrap_or_else(|| {
+        format!("connection ended at {have} of {} bytes", file.size)
+    })))
 }
 
 fn content_range_start(resp: &ureq::http::Response<ureq::Body>) -> Option<u64> {
@@ -539,6 +610,11 @@ mod tests {
         Truncate,
         /// Answer a Range with 206 for a range that starts 1000 bytes before the one asked for.
         WrongRange,
+        /// First request: send half the body, then keep the socket open and send nothing.
+        /// Later requests: like `Ranges`.
+        StallFirst,
+        /// Answer every Range with 416; a request without one gets the full body.
+        Always416,
     }
 
     struct Server {
@@ -552,66 +628,88 @@ mod tests {
         let ranges = Arc::new(Mutex::new(Vec::new()));
         let seen = ranges.clone();
         std::thread::spawn(move || {
-            for stream in l.incoming() {
-                let Ok(mut s) = stream else { break };
-                let mut req = Vec::new();
-                let mut b = [0u8; 1];
-                while !req.ends_with(b"\r\n\r\n") {
-                    if s.read(&mut b).unwrap_or(0) == 0 {
-                        break;
-                    }
-                    req.push(b[0]);
-                }
-                let req = String::from_utf8_lossy(&req).to_string();
-                let range = req
-                    .lines()
-                    .find_map(|l| l.strip_prefix("Range: ").or(l.strip_prefix("range: ")))
-                    .map(|r| r.trim().to_string());
-                seen.lock().unwrap().push(range.clone());
-                let mut data = body.clone();
-                if mode == Mode::Corrupt {
-                    data[0] ^= 0xff;
-                }
-                let start = match (mode, &range) {
-                    (Mode::Ranges, Some(r)) => r
-                        .trim_start_matches("bytes=")
-                        .trim_end_matches('-')
-                        .parse::<usize>()
-                        .unwrap(),
-                    (Mode::WrongRange, Some(r)) => {
-                        r.trim_start_matches("bytes=")
-                            .trim_end_matches('-')
-                            .parse::<usize>()
-                            .unwrap()
-                            - 1000
-                    }
-                    _ => 0,
-                };
-                let slice = &data[start..];
-                let head = if start > 0 {
-                    format!(
-                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
-                        slice.len(),
-                        start,
-                        data.len() - 1,
-                        data.len()
-                    )
-                } else {
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                        slice.len()
-                    )
-                };
-                let _ = s.write_all(head.as_bytes());
-                let send = if mode == Mode::Truncate {
-                    &slice[..slice.len() / 2]
-                } else {
-                    slice
-                };
-                let _ = s.write_all(send);
+            for (nth, stream) in l.incoming().enumerate() {
+                let Ok(s) = stream else { break };
+                let (body, seen) = (body.clone(), seen.clone());
+                // One thread per connection, so a stalled answer does not block the next one.
+                std::thread::spawn(move || answer(s, nth, &body, mode, &seen));
             }
         });
         Server { url, ranges }
+    }
+
+    fn answer(
+        mut s: std::net::TcpStream,
+        nth: usize,
+        body: &[u8],
+        mode: Mode,
+        seen: &Mutex<Vec<Option<String>>>,
+    ) {
+        let mut req = Vec::new();
+        let mut b = [0u8; 1];
+        while !req.ends_with(b"\r\n\r\n") {
+            if s.read(&mut b).unwrap_or(0) == 0 {
+                break;
+            }
+            req.push(b[0]);
+        }
+        let req = String::from_utf8_lossy(&req).to_string();
+        let range = req
+            .lines()
+            .find_map(|l| l.strip_prefix("Range: ").or(l.strip_prefix("range: ")))
+            .map(|r| r.trim().to_string());
+        seen.lock().unwrap().push(range.clone());
+        let asked = |r: &str| {
+            r.trim_start_matches("bytes=")
+                .trim_end_matches('-')
+                .parse::<usize>()
+                .unwrap()
+        };
+        if mode == Mode::Always416 && range.is_some() {
+            let _ = s.write_all(
+                b"HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            return;
+        }
+        let mut data = body.to_vec();
+        if mode == Mode::Corrupt {
+            data[0] ^= 0xff;
+        }
+        let start = match (mode, &range) {
+            (Mode::Ranges | Mode::StallFirst, Some(r)) => asked(r),
+            (Mode::WrongRange, Some(r)) => asked(r) - 1000,
+            _ => 0,
+        };
+        let slice = &data[start..];
+        let head = if start > 0 {
+            format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nConnection: close\r\n\r\n",
+                slice.len(),
+                start,
+                data.len() - 1,
+                data.len()
+            )
+        } else {
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                slice.len()
+            )
+        };
+        let _ = s.write_all(head.as_bytes());
+        match mode {
+            Mode::Truncate => {
+                let _ = s.write_all(&slice[..slice.len() / 2]);
+            }
+            Mode::StallFirst if nth == 0 => {
+                let _ = s.write_all(&slice[..slice.len() / 2]);
+                let _ = s.flush();
+                // Hold the socket open with nothing more to send.
+                std::thread::sleep(Duration::from_secs(30));
+            }
+            _ => {
+                let _ = s.write_all(slice);
+            }
+        }
     }
 
     fn body() -> Vec<u8> {
@@ -708,6 +806,57 @@ mod tests {
     }
 
     #[test]
+    fn stalled_body_resumes_within_the_round_timeout() {
+        let data = body();
+        let srv = serve(data.clone(), Mode::StallFirst);
+        let t = tempfile::tempdir().unwrap();
+        let f = file_for(t.path(), &srv.url, &data, true);
+        let t0 = std::time::Instant::now();
+        download(&agent_with(Duration::from_secs(1)), &f, &mut |_| {}).unwrap();
+        assert!(
+            t0.elapsed() < Duration::from_secs(10),
+            "a stalled socket must not block: {:?}",
+            t0.elapsed()
+        );
+        assert_eq!(std::fs::read(&f.dest).unwrap(), data);
+        let ranges = srv.ranges.lock().unwrap().clone();
+        assert_eq!(ranges.len(), 2, "{ranges:?}");
+        assert_eq!(ranges[0], None);
+        let resumed_at = asked_start(ranges[1].as_deref().unwrap());
+        assert!(resumed_at > 0 && resumed_at < data.len(), "{ranges:?}");
+    }
+
+    fn asked_start(r: &str) -> usize {
+        r.trim_start_matches("bytes=")
+            .trim_end_matches('-')
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn rejected_range_drops_part_so_the_next_try_starts_clean() {
+        let data = body();
+        let srv = serve(data.clone(), Mode::Always416);
+        let t = tempfile::tempdir().unwrap();
+        let f = file_for(t.path(), &srv.url, &data, true);
+        std::fs::create_dir_all(f.dest.parent().unwrap()).unwrap();
+        std::fs::write(f.part_path(), &data[..100_000]).unwrap();
+        let err = download(&agent(), &f, &mut |_| {}).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("rejected the resume range"),
+            "{err:#}"
+        );
+        assert!(!f.part_path().exists(), "the part file is gone");
+        // The next try sends no Range and completes.
+        download(&agent(), &f, &mut |_| {}).unwrap();
+        assert_eq!(std::fs::read(&f.dest).unwrap(), data);
+        assert_eq!(
+            srv.ranges.lock().unwrap().as_slice(),
+            &[Some("bytes=100000-".to_string()), None]
+        );
+    }
+
+    #[test]
     fn checksum_mismatch_retries_once_then_fails() {
         let data = body();
         let srv = serve(data.clone(), Mode::Corrupt);
@@ -726,7 +875,8 @@ mod tests {
         let srv = serve(data.clone(), Mode::Truncate);
         let t = tempfile::tempdir().unwrap();
         let f = file_for(t.path(), &srv.url, &data, false);
-        assert!(download(&agent(), &f, &mut |_| {}).is_err());
+        let err = download(&agent(), &f, &mut |_| {}).unwrap_err();
+        assert!(format!("{err:#}").contains("stopped at"), "{err:#}");
         assert!(!f.dest.exists());
         let kept = std::fs::metadata(f.part_path())
             .map(|m| m.len())
