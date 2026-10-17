@@ -49,3 +49,6 @@ venv/
 
 # Desktop app cargo target
 /target-desktop
+
+# Tauri-generated schemas
+/desktop/src-tauri/gen/

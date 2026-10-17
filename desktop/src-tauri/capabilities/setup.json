@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "setup",
+  "description": "The first-run setup page (setup.html). The engine UI at http://127.0.0.1 has no capability.",
+  "windows": ["setup"],
+  "permissions": [
+    "core:event:default",
+    "allow-setup-state",
+    "allow-retry-setup",
+    "allow-use-system-tools"
+  ]
+}
