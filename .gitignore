@@ -47,8 +47,9 @@ venv/
 # Secondary cargo target (gemma-native build)
 /target-gemma
 
-# Desktop app cargo target
+# Desktop app cargo target (at the root, or next to the Tauri crate)
 /target-desktop
+/desktop/src-tauri/target-desktop/
 
 # Tauri-generated schemas
 /desktop/src-tauri/gen/
