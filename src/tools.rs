@@ -69,10 +69,14 @@ pub fn yt_dlp() -> PathBuf {
     resolve("yt-dlp")
 }
 
-/// `["--ffmpeg-location", <dir>]` when ffmpeg resolves to an absolute path, so yt-dlp merges and
-/// remuxes with the same ffmpeg as Retrace. Empty when ffmpeg was not found (yt-dlp then uses its
-/// own search, as before).
+/// `["--ffmpeg-location", <dir>]` when an override directory is set (the desktop app) and ffmpeg
+/// resolves to an absolute path, so yt-dlp merges and remuxes with the same ffmpeg as Retrace.
+/// Empty for the CLI (no override directory), so yt-dlp keeps its own search and the user's
+/// yt-dlp config, as before.
 pub fn yt_dlp_ffmpeg_args() -> Vec<String> {
+    if tools_dir().is_none() {
+        return vec![];
+    }
     ffmpeg_location_args(&ffmpeg())
 }
 
