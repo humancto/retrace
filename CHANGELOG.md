@@ -6,6 +6,67 @@ All notable changes to Retrace are recorded here. The format follows
 
 ## [Unreleased]
 
+### Planned
+- A Windows installer.
+- Developer ID signing and notarization in the release build (today a person does it; see
+  `docs/DESKTOP.md`).
+- Automatic updates for the desktop app.
+- A live indicator in the menu bar.
+- One shared embedder for ingest, audio and search, to use less memory.
+
+## [0.5.0] — 2026-10-17
+
+### Added
+- **Retrace Desktop** (`desktop/src-tauri/`, Tauri v2): the engine and both embedders (SigLIP 2
+  and EmbeddingGemma 2 in the process) in a native macOS window. Download
+  `Retrace_0.5.0_aarch64.dmg` from the GitHub release. You do not need a terminal, Homebrew, Rust or
+  Python.
+- First-run setup with a progress window: the app downloads fixed versions of ffmpeg and ffprobe
+  9.0.2 (martin-riedl.de GPL build), yt-dlp 2026.08.19, the detector and the weights of the
+  selected embedder. Each file has a SHA-256 check, and a stopped download continues. With SigLIP 2,
+  a cold first run downloads 9 files, 1,671,494,078 bytes. Setup checks that ffmpeg has libx264.
+  **Try again** and **Use the installed tools** are on the setup page.
+- **File > Open Video…**, drag and drop, Finder "Open With" and `--open <file>` add a video to a
+  queue that indexes one file at a time. The window title shows the indexing progress.
+- **File > Add Camera…** adds a live source. **Help** opens the data folder, the GitHub page and
+  the third-party software list.
+- All app data is in `~/Library/Application Support/com.humancto.retrace/`, with one index and one
+  crops folder for each embedder. `RETRACE_APP_DATA`, `RETRACE_SETUP`, `RETRACE_MODELS_SEED`,
+  `RETRACE_DOWNLOAD_DIR` and `RETRACE_LOG_STDERR` control unattended runs.
+- A quit stops the ingest, the child processes and the server, then frees the embedder. The app
+  exits with code 0 and leaves no ffmpeg or yt-dlp process.
+- CI workflow `desktop.yml`: macOS arm64 (required) and Linux AppImage and deb (best effort). On a
+  `v*` tag it attaches the bundles to the release.
+- `docs/DESKTOP.md`: architecture, data layout, build, CI and signing.
+
+### Changed
+- The engine is now a library (`src/lib.rs`) and a thin CLI (`src/main.rs`). The CLI behaviour does
+  not change: `scripts/e2e.sh` passes with recall@5 0.952 and mAP 0.946.
+- A tools resolver (`src/tools.rs`) finds ffmpeg, ffprobe and yt-dlp in this order: the app tools
+  folder, the folder of the executable, `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`. Each call to
+  these tools goes through it, and yt-dlp always gets `--ffmpeg-location`.
+- `api::bind` binds the port first and returns a handle that stops the server cleanly. `serve`
+  uses it.
+- The engine records the frame-pipe ffmpeg, the audio ffmpeg, yt-dlp and the clip ffmpeg as child
+  processes, so a stop kills all of them.
+- `Embedder::release` frees the model before exit. This prevents an abort in llama.cpp at exit
+  with EmbeddingGemma 2.
+- The model downloads for the flat `--models-dir` layout are in `src/models/fetch.rs`.
+- With tracklets in the index and no query, the UI tells how many tracklets and cameras are
+  indexed, not "No index yet". In the desktop app it also tells you how to open a video.
+
+### Known limitations
+- The builds have an ad-hoc signature only. Apple does not notarize them. On macOS 14, right-click
+  the app and select **Open**. On macOS 15 and later, use System Settings > Privacy & Security >
+  **Open Anyway**.
+- Today the only release artifact is for macOS on Apple Silicon (macOS 14 or later). The Linux
+  build is best effort.
+- The UI page still loads its fonts from Google Fonts.
+- One indexed video uses much memory: peak RSS was about 6.6 GiB with SigLIP 2 and about 2.4 GiB
+  with EmbeddingGemma 2 for `vtest.avi`.
+- The app has no menu item to change the embedder. Change `"embedder"` in `settings.json` and open
+  the app again.
+
 ## [0.4.1] — 2026-10-16
 
 ### Fixed
@@ -91,7 +152,8 @@ First public release.
 - The UI requested a favicon that did not exist (one console error per page load).
 - Clippy clean-up across the crate (collapsed `if`s, needless borrows, `is_multiple_of`).
 
-[Unreleased]: https://github.com/humancto/retrace/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/humancto/retrace/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/humancto/retrace/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/humancto/retrace/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/humancto/retrace/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/humancto/retrace/releases/tag/v0.3.0
