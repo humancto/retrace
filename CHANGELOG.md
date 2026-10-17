@@ -13,8 +13,6 @@ All notable changes to Retrace are recorded here. The format follows
 - Automatic updates for the desktop app.
 - A live indicator in the menu bar.
 - One shared embedder for ingest, audio and search, to use less memory.
-- Bundle the licence notices of the compiled Rust crates (`cargo about`) in the app and show them
-  in Help > Third-Party Software.
 - Unique camera names for files with the same name in different folders (today `/a/clip.mp4` and
   `/b/clip.mp4` both index as camera `clip`).
 - A Tools item in the app menu to change between the downloaded and the installed video tools at
