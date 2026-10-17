@@ -21,6 +21,11 @@ All notable changes to Retrace are recorded here. The format follows
   file size and the file type.
 - Wait for an ingest that still runs its own EmbeddingGemma 2 embedder after the 3 s quit deadline,
   so its llama.cpp buffers are freed before exit.
+- A Tools item in the app menu to change between the downloaded and the installed video tools.
+  Today, when the tool download fails and the models are present, setup shows **Use the installed
+  tools** with the warning, but the window goes to the engine page one or two seconds later.
+- Give the quit thread join its own time budget. Today the wait for a running setup and the thread
+  joins share one 3 s deadline.
 
 ## [0.5.0] — 2026-10-17
 
