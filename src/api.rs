@@ -570,7 +570,7 @@ async fn clip(State(st): S, Query(q): Query<ClipQ>) -> Response {
         let secs = dur as f64 / 1000.0;
         let path = src.path.clone();
         let out = tokio::task::spawn_blocking(move || {
-            std::process::Command::new("ffmpeg")
+            std::process::Command::new(crate::tools::ffmpeg())
                 .args([
                     "-hide_banner",
                     "-loglevel",
@@ -686,7 +686,7 @@ async fn clip(State(st): S, Query(q): Query<ClipQ>) -> Response {
             if written.is_ok() {
                 let tmp2 = tmp.clone();
                 let out = tokio::task::spawn_blocking(move || {
-                    let o = std::process::Command::new("ffmpeg")
+                    let o = std::process::Command::new(crate::tools::ffmpeg())
                         .args([
                             "-hide_banner",
                             "-loglevel",

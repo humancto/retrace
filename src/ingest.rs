@@ -224,7 +224,8 @@ impl Drop for IngestChildren {
 }
 
 fn yt_dlp(args: &[&str]) -> Result<std::process::Output> {
-    std::process::Command::new("yt-dlp")
+    std::process::Command::new(crate::tools::yt_dlp())
+        .args(crate::tools::yt_dlp_ffmpeg_args())
         .args(args)
         .output()
         .context("run yt-dlp (brew install yt-dlp, or pip install yt-dlp)")
@@ -372,7 +373,7 @@ pub(crate) fn live_input_args(url: &str) -> Vec<String> {
 /// plays back up to its last complete fragment.
 fn spawn_recorder(url: &str, dir: &Path) -> Result<std::process::Child> {
     std::fs::create_dir_all(dir)?;
-    let mut c = std::process::Command::new("ffmpeg");
+    let mut c = std::process::Command::new(crate::tools::ffmpeg());
     c.args(["-nostdin", "-hide_banner", "-loglevel", "error"]);
     c.args(live_input_args(url));
     c.args(["-i", url])
@@ -420,7 +421,7 @@ fn sweep_recordings(dir: &Path, retain_hours: f64) {
 }
 
 pub fn probe_duration_ms(path: &str) -> Option<i64> {
-    let out = std::process::Command::new("ffprobe")
+    let out = std::process::Command::new(crate::tools::ffprobe())
         .args([
             "-v",
             "error",
@@ -625,7 +626,7 @@ pub fn run_ingest(
         );
     }
 
-    let mut cmd = FfmpegCommand::new();
+    let mut cmd = FfmpegCommand::new_with_path(crate::tools::ffmpeg());
     cmd.args(["-nostdin"]); // ffmpeg-sidecar sets its own loglevel; it parses stderr to learn the output frame format
     if live {
         cmd.args(live_input_args(&url));
@@ -637,7 +638,12 @@ pub fn run_ingest(
             &format!("fps={},scale={}:-2", opts.fps, opts.width),
         ])
         .rawvideo();
-    let mut child = cmd.spawn().context("spawn ffmpeg (is ffmpeg on PATH?)")?;
+    let mut child = cmd.spawn().with_context(|| {
+        format!(
+            "spawn {} (is ffmpeg installed?)",
+            crate::tools::ffmpeg().display()
+        )
+    })?;
     let ffmpeg_pid = child.as_inner().id();
     children.ffmpeg = Some(child);
 

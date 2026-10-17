@@ -13,4 +13,5 @@ pub mod models;
 pub mod overlay;
 pub mod rules;
 pub mod search;
+pub mod tools;
 pub mod track;

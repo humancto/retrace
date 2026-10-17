@@ -31,7 +31,7 @@ pub struct AudioOpts {
 
 /// True when ffprobe sees an audio stream.
 pub fn has_audio(url: &str) -> bool {
-    let mut c = std::process::Command::new("ffprobe");
+    let mut c = std::process::Command::new(crate::tools::ffprobe());
     c.args(crate::ingest::user_agent_args(url));
     if crate::ingest::is_http(url) {
         // Fail the probe when the server sends nothing for 20 s, instead of blocking the ingest.
@@ -128,7 +128,7 @@ pub fn run_audio(
         .map(|c| c.id)
         .context("camera row missing")?;
 
-    let mut c = std::process::Command::new("ffmpeg");
+    let mut c = std::process::Command::new(crate::tools::ffmpeg());
     c.args(["-nostdin", "-hide_banner", "-loglevel", "error"]);
     if opts.live {
         c.args(crate::ingest::live_input_args(&opts.url));
