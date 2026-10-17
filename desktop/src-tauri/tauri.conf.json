@@ -20,7 +20,7 @@
     "category": "Video",
     "shortDescription": "Ask your videos what happened. Fully local.",
     "longDescription": "Retrace indexes video on your own machine and lets you search it in plain words. Nothing leaves the machine.",
-    "copyright": "MIT License",
+    "copyright": "Copyright (c) 2026 Archith Rapaka. MIT License.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,6 +42,14 @@
         "role": "Viewer"
       }
     ],
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/retrace.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/retrace.desktop"
+      }
+    },
     "macOS": {
       "minimumSystemVersion": "14.0",
       "signingIdentity": "-"
