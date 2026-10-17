@@ -11,7 +11,7 @@
     "withGlobalTauri": true,
     "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     }
   },
   "bundle": {
@@ -27,6 +27,20 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "mp4",
+          "mov",
+          "m4v",
+          "avi",
+          "mkv",
+          "webm"
+        ],
+        "name": "Video",
+        "role": "Viewer"
+      }
     ],
     "macOS": {
       "minimumSystemVersion": "14.0",

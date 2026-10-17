@@ -87,7 +87,9 @@ fn clean_name(name: &str) -> String {
     }
 }
 
-/// `dir/name`, or `dir/stem (n).ext` when that exists.
+/// `dir/name`, or `dir/stem (n).ext` when that exists, or a name with the current time in
+/// nanoseconds when all of those exist. Never a path that exists, so a download never overwrites
+/// a file.
 pub fn unique_in(dir: &Path, name: &str) -> PathBuf {
     let first = dir.join(name);
     if !first.exists() {
@@ -102,7 +104,22 @@ pub fn unique_in(dir: &Path, name: &str) -> PathBuf {
             None => dir.join(format!("{stem} ({n})")),
         })
         .find(|c| !c.exists())
-        .unwrap_or(first)
+        .unwrap_or_else(|| {
+            let mut n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            loop {
+                let c = match ext {
+                    Some(e) => dir.join(format!("{stem} ({n}).{e}")),
+                    None => dir.join(format!("{stem} ({n})")),
+                };
+                if !c.exists() {
+                    return c;
+                }
+                n += 1;
+            }
+        })
 }
 
 #[cfg(test)]
@@ -148,6 +165,18 @@ mod tests {
         std::fs::write(t.path().join("a (1).mp4"), b"").unwrap();
         assert_eq!(unique_in(t.path(), "a.mp4"), t.path().join("a (2).mp4"));
         assert_eq!(clean_name("../x/y.mp4"), "_x_y.mp4");
+    }
+
+    #[test]
+    fn unique_never_returns_an_existing_path() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("b"), b"").unwrap();
+        for n in 1..10_000 {
+            std::fs::write(t.path().join(format!("b ({n})")), b"").unwrap();
+        }
+        let p = unique_in(t.path(), "b");
+        assert!(!p.exists(), "{}", p.display());
+        assert_eq!(p.parent(), Some(t.path()));
     }
 
     #[test]
