@@ -44,7 +44,7 @@ jobs:
             optional: false
             bundles: app,dmg
           - name: Linux x86_64
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             optional: true
             bundles: appimage,deb
     steps:

@@ -249,7 +249,7 @@ request that changes `desktop/`, `src/`, `crates/`, `ui/`, `Cargo.toml` or `Carg
 | Job          | Runner         | Bundles           | Failure                           |
 | ------------ | -------------- | ----------------- | --------------------------------- |
 | macOS arm64  | `macos-14`     | `app`, `dmg`      | fails the workflow                |
-| Linux x86_64 | `ubuntu-22.04` | `appimage`, `deb` | best effort (`continue-on-error`) |
+| Linux x86_64 | `ubuntu-24.04` | `appimage`, `deb` | best effort (`continue-on-error`) |
 
 Each job runs `cargo fmt --check`, the desktop clippy command above, `cargo test -p retrace-desktop` and
 `cargo tauri build`. It uploads the bundles as the artifact `retrace-desktop-<OS>`. The macOS job also uploads
