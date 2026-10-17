@@ -18,6 +18,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   LINT_TOOLCHAIN: "1.91.1"
+  # rust-toolchain.toml says "stable", and it wins over the toolchain the setup action installs as
+  # the default. This env var wins over the file, so clippy runs on the pinned version.
+  RUSTUP_TOOLCHAIN: "1.91.1"
   # Portable llama.cpp CPU code (no -march=native) and the app's minimum macOS.
   LLAMA_NATIVE: "0"
   MACOSX_DEPLOYMENT_TARGET: "14.0"
