@@ -171,14 +171,19 @@ const GEMMA2_GGUF: HfRepo = (
 );
 
 /// GitHub release assets (jamjamjon/assets): `(tag, file, size, sha256)`. GitHub publishes no
-/// digest for these; dfine-s-coco was pinned from two independent downloads.
+/// digest for these; each one was pinned from two independent downloads.
 const GH_DEIM_S: (&str, &str, u64, Option<&str>) = (
     "deim",
     "dfine-s-coco.onnx",
     41_761_986,
     Some("2b71a81cf05be32bc8f3bd50a4346cba55b2b7b68e1a49ccc06e4fa552d394f7"),
 );
-const GH_DEIM_M: (&str, &str, u64, Option<&str>) = ("deim", "dfine-m-coco.onnx", 77_864_465, None);
+const GH_DEIM_M: (&str, &str, u64, Option<&str>) = (
+    "deim",
+    "dfine-m-coco.onnx",
+    77_864_465,
+    Some("0e52947b8cc7bd35cec675a27e419fdea439da04f95c5a36de4fb7e3d3e6667d"),
+);
 const GH_CLIP: &[(&str, &str, u64, Option<&str>)] = &[
     (
         "clip",
@@ -198,8 +203,18 @@ const GH_CLIP: &[(&str, &str, u64, Option<&str>)] = &[
         389,
         Some("f8c0d6c39aee3f8431078ef6646567b0aba7f2246e9c54b8b99d55c22b707cbf"),
     ),
-    ("clip", "vit-b16-textual.onnx", 253_867_625, None),
-    ("clip", "vit-b16-visual.onnx", 344_900_662, None),
+    (
+        "clip",
+        "vit-b16-textual.onnx",
+        253_867_625,
+        Some("50ff09e0613e466ba6c16ea68e0e0a02699d4974ee9aa39d254ce8d8d8a387a7"),
+    ),
+    (
+        "clip",
+        "vit-b16-visual.onnx",
+        344_900_662,
+        Some("ebe2ee77e002ed33708e74c9ab3bd344e8781298804b5533973b2658aa96b786"),
+    ),
 ];
 
 /// The usls cache root (`<OS cache dir>/usls`), where usls looks for downloaded files.
