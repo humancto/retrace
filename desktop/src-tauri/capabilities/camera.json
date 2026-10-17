@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "camera",
+  "description": "The Add Camera window (camera.html).",
+  "windows": ["camera"],
+  "permissions": [
+    "core:window:allow-close",
+    "allow-add-camera"
+  ]
+}

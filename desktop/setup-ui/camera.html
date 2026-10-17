@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Add Camera</title>
+<style>
+:root{--bg:#0e1319;--line:#25303b;--text:#e7ecef;--muted:#8b98a5;--teal:#3fc1b9;--red:#e06b69;
+--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans)}
+form{padding:22px 24px}
+h1{font-size:18px;margin:0 0 6px}
+p{color:var(--muted);margin:0 0 16px}
+label{display:block;font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 4px}
+input{width:100%;font:14px var(--mono);padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:#151c24;color:var(--text)}
+input:focus{outline:2px solid var(--teal);outline-offset:0}
+.row{margin-top:18px;display:flex;gap:8px;justify-content:flex-end}
+button{font:600 14px var(--sans);border-radius:8px;padding:8px 16px;cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--text)}
+button.primary{background:var(--teal);border-color:var(--teal);color:#06211f}
+#err{color:var(--red);min-height:20px;margin:10px 0 0;overflow-wrap:anywhere}
+#err.busy{color:var(--muted)}
+</style>
+</head>
+<body>
+<form id="f">
+  <h1>Add a camera</h1>
+  <p>Retrace watches a live stream and indexes it. The stream stays on this computer. If the address is a video and not a live stream, Retrace indexes the video one time.</p>
+  <label for="name">Name</label>
+  <input id="name" required maxlength="40" placeholder="front-door" autocomplete="off">
+  <label for="url">Stream address</label>
+  <input id="url" required placeholder="rtsp://192.168.1.20:554/stream1" autocomplete="off">
+  <div id="err" role="alert"></div>
+  <div class="row">
+    <button type="button" id="cancel">Cancel</button>
+    <button type="submit" class="primary" id="add">Add camera</button>
+  </div>
+</form>
+<script>
+const T = window.__TAURI__;
+const $ = id => document.getElementById(id);
+$('cancel').onclick = () => T.window.getCurrentWindow().close();
+$('f').onsubmit = async e => {
+  e.preventDefault();
+  $('err').className = 'busy'; $('err').textContent = 'Checking the stream\u2026'; $('add').disabled = true;
+  try { await T.core.invoke('add_camera', {name: $('name').value, url: $('url').value}); }
+  catch(x){ $('err').className = ''; $('err').textContent = String(x); }
+  finally { $('add').disabled = false; }
+};
+$('name').focus();
+</script>
+</body>
+</html>

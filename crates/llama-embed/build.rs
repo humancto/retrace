@@ -62,6 +62,7 @@ fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_DIR");
     println!("cargo:rerun-if-env-changed=LLAMA_CPP_TAG");
+    println!("cargo:rerun-if-env-changed=LLAMA_NATIVE");
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -136,7 +137,17 @@ fn main() {
             "-DGGML_NATIVE=OFF",
         ]);
     } else {
-        cfg.args(["-DGGML_METAL=OFF", "-DGGML_NATIVE=ON"]);
+        // LLAMA_NATIVE=0: generic CPU code, for binaries that run on other machines (release
+        // builds). Anything else keeps the default: code tuned for the CPU of this machine.
+        let native = env::var("LLAMA_NATIVE").as_deref() != Ok("0");
+        cfg.args([
+            "-DGGML_METAL=OFF",
+            if native {
+                "-DGGML_NATIVE=ON"
+            } else {
+                "-DGGML_NATIVE=OFF"
+            },
+        ]);
     }
     run(&mut cfg, "cmake configure");
     let jobs = std::thread::available_parallelism()

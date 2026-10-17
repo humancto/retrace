@@ -185,6 +185,12 @@ section{padding:clamp(48px,7vw,92px) 0;border-top:1px solid var(--rule)}
 .two{display:grid;grid-template-columns:1fr;gap:20px;margin-top:20px}
 @media(min-width:760px){.two{grid-template-columns:1fr 1fr}}
 .two .code{font-size:13.5px}
+.dl{display:grid;grid-template-columns:1fr;gap:18px 36px;align-items:center;background:var(--print);border:1px solid var(--print-edge);border-radius:4px;padding:22px 22px 24px;margin:0 0 36px}
+@media(min-width:760px){.dl{grid-template-columns:minmax(0,1fr) auto;padding:24px 28px}}
+.dl .src{margin:0 0 10px}
+.dl p:not(.src){margin:8px 0 0;max-width:64ch;color:var(--ink-2);font-size:15.5px}
+.dl .btn{justify-self:start}
+.or{margin:0 0 14px}
 
 /* limits */
 .limits{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:1fr;gap:18px 40px}
@@ -373,6 +379,15 @@ person in dark clothes              recall@5=1.00  AP=0.96  top=[17, 25, 3, 18, 
       </div>
       <p>The first build compiles the onnxruntime bindings and takes some minutes. The first run downloads the open weights one time. After that, Retrace does not use the network.</p>
     </div>
+<div class="dl" id="download">
+      <div>
+        <p class="mono src">Desktop app · v0.5.0 · macOS 14 or later on Apple Silicon</p>
+        <h3>Download the app. No terminal, no Homebrew.</h3>
+        <p>The first run downloads ffmpeg, yt-dlp and the open weights, about 1.7 GB with the default embedder. The build has no Apple signature. On macOS 14, right-click the app and select Open. On macOS 15 and later, use System Settings &gt; Privacy &amp; Security &gt; Open Anyway.</p>
+      </div>
+      <a class="btn primary" href="https://github.com/humancto/retrace/releases/latest">Download for Mac</a>
+    </div>
+    <p class="mono or">Or build it from source</p>
 <pre class="code" id="quick"><button class="copy" type="button" data-copy="quick">Copy</button><span class="p">$ </span>brew install ffmpeg rust
 <span class="p">$ </span>git clone https://github.com/humancto/retrace &amp;&amp; cd retrace
 <span class="p">$ </span>cargo build --release

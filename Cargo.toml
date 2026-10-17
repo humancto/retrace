@@ -1,6 +1,6 @@
 [package]
 name = "retrace"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
 description = "A fully local video investigator: ask your cameras what happened, then retrace their steps. Nothing leaves the machine."
@@ -14,7 +14,9 @@ categories = ["multimedia::video", "computer-vision", "command-line-utilities"]
 publish = false
 
 [workspace]
-members = [".", "crates/llama-embed"]
+members = [".", "crates/llama-embed", "desktop/src-tauri"]
+# Root builds/tests stay CLI-only: the desktop crate turns on gemma-native and needs cmake.
+default-members = ["."]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -40,6 +42,9 @@ ureq = { version = "3", features = ["json"] }
 llama-embed = { path = "crates/llama-embed", optional = true }
 tempfile = "3"
 percent-encoding = "2"
+# Model prefetch: checksums and the usls cache root.
+sha2 = "0.10"
+dirs = "6"
 
 # usls wraps onnxruntime (via `ort`) with pre/post-processing for DEIM/D-FINE/RT-DETR/RF-DETR
 # detectors, CLIP/SigLIP 2 embeddings and ByteTrack. Pinned to a commit; it pins ort =2.0.0-rc.13.

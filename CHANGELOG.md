@@ -6,6 +6,131 @@ All notable changes to Retrace are recorded here. The format follows
 
 ## [Unreleased]
 
+### Planned
+- A Windows installer.
+- Developer ID signing and notarization in the release build (today a person does it; see
+  `docs/DESKTOP.md`).
+- Automatic updates for the desktop app.
+- A live indicator in the menu bar.
+- One shared embedder for ingest, audio and search, to use less memory.
+- Unique camera names for files with the same name in different folders (today `/a/clip.mp4` and
+  `/b/clip.mp4` both index as camera `clip`).
+- A Tools item in the app menu to change between the downloaded and the installed video tools at
+  any time. Today the setup page offers **Use the installed tools** (on a failure or a tool
+  warning) and **Download the tools** (when setup with the installed tools fails).
+- Wait longer for an ingest or live thread that still runs its own EmbeddingGemma 2 embedder at
+  quit. Today the app waits 3 s for each thread and then exits with `_exit`, so the process does
+  not abort, but the ingest does not finish its last batch.
+- Pin the third-party GitHub Actions in `desktop.yml` to commit SHAs.
+- Downloads from a server that ignores Range requests: each 120 s request starts again from byte 0,
+  so a large file on such a server needs about 9 MB/s or more. The pinned hosts (Hugging Face,
+  GitHub, martin-riedl.de) support Range, so this applies only if a mirror is added.
+- Keep App Nap on while the app is idle, and hold a macOS activity only while an ingest runs.
+- Check the clip download (`download=` links) in the built app with a real click, and record a
+  relaunch with the network off. Today a person must do these two checks (see the PR test plan).
+- Ship a full licence file for the statically linked code (ONNX Runtime, llama.cpp, Tauri and the
+  MIT/Apache crates, with their copyright and permission text) as a bundle resource, generated at
+  build time with `cargo about`, and point Help > Third-Party Software at it. Today
+  `THIRD-PARTY.txt` names each licence only.
+- Install `tauri-cli` in CI from a prebuilt binary (`cargo-binstall` or `taiki-e/install-action`)
+  instead of a source build on each leg.
+- A download that stalls without sending bytes still holds a quit for up to the 10 s setup budget,
+  because the stop flag is checked between reads.
+
+## [0.5.0] — 2026-10-17
+
+### Added
+- **Retrace Desktop** (`desktop/src-tauri/`, Tauri v2): the engine and both embedders (SigLIP 2
+  and EmbeddingGemma 2 in the process) in a native macOS window. Download
+  `Retrace_0.5.0_aarch64.dmg` from the GitHub release. You do not need a terminal, Homebrew, Rust or
+  Python.
+- First-run setup with a progress window: the app downloads fixed versions of ffmpeg and ffprobe
+  9.0.2 (martin-riedl.de GPL build), yt-dlp 2026.08.19, the detector and the weights of the
+  selected embedder. Each file has a SHA-256 check, and a stopped download continues. With SigLIP 2,
+  a cold first run downloads 9 files, 1,671,494,078 bytes. Setup checks that ffmpeg has libx264.
+  **Try again** and **Use the installed tools** are on the setup page.
+- **File > Open Video…**, drag and drop, Finder "Open With" and `--open <file>` add a video to a
+  queue that indexes one file at a time. The window title shows the indexing progress.
+- **File > Add Camera…** adds a live source. The stream check runs off the main thread, so the
+  window does not stop. If the address is a video and not a live stream (for example a YouTube
+  video that is not live), the app indexes it one time on the file queue. Two live cameras cannot
+  have the same name. **Help** opens the data folder, the GitHub page and the third-party
+  software list.
+- All app data is in `~/Library/Application Support/com.humancto.retrace/`, with one index and one
+  crops folder for each embedder. `RETRACE_APP_DATA`, `RETRACE_SETUP`, `RETRACE_MODELS_SEED`,
+  `RETRACE_DOWNLOAD_DIR` and `RETRACE_LOG_STDERR` control unattended runs.
+- A quit stops the ingest, the child processes and the server, then frees the embedder. The app
+  exits with code 0 and leaves no ffmpeg or yt-dlp process.
+- CI workflow `desktop.yml`: macOS arm64 (required) and Linux AppImage and deb (best effort). On a
+  `v*` tag it attaches the bundles to the release.
+- `docs/DESKTOP.md`: architecture, data layout, build, CI and signing.
+
+### Changed
+- The engine is now a library (`src/lib.rs`) and a thin CLI (`src/main.rs`). The CLI behaviour does
+  not change: `scripts/e2e.sh` passes with recall@5 0.952 and mAP 0.946.
+- A tools resolver (`src/tools.rs`) finds ffmpeg, ffprobe and yt-dlp in this order: the app tools
+  folder, the folder of the executable, `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`. Each call to
+  these tools goes through it. For the CLI, the new parts are the folder of the executable before
+  `PATH` and the two Homebrew folders after it: an ffmpeg, ffprobe or yt-dlp next to the `retrace`
+  binary now wins over the one on `PATH` (the frame pipe already worked this way through
+  ffmpeg-sidecar). In the desktop app, yt-dlp also gets
+  `--ffmpeg-location`; the CLI does not add it.
+- `serve` logs the address it bound, not the address string it was given.
+- `api::bind` binds the port first and returns a handle that stops the server cleanly. `serve`
+  uses it.
+- The engine records the frame-pipe ffmpeg, the audio ffmpeg, yt-dlp and the clip ffmpeg as child
+  processes, so a stop kills all of them.
+- `Embedder::release` frees the model before exit. This prevents an abort in llama.cpp at exit
+  with EmbeddingGemma 2.
+- The model downloads for the flat `--models-dir` layout are in `src/models/fetch.rs`.
+- With tracklets in the index and no query, the UI tells how many tracklets and cameras are
+  indexed, not "No index yet". With an empty index, the desktop app tells you how to add a
+  video (Cmd+O, or drop the file on the window).
+
+### Fixed (review of PR #3)
+- A download that stalls no longer blocks setup for ever. Each request has a 120 s body time; a
+  request that ends early keeps its bytes and the next request continues with a Range. Three
+  requests in a row with no new bytes stop the download with an error and **Try again**.
+- A 416 answer to a resume request deletes the partial file, so the next try starts from byte 0.
+- `LLAMA_NATIVE=0` now compiles llama.cpp with generic CPU code (`GGML_NATIVE=OFF`) on Linux. The
+  desktop CI sets it, so the Linux AppImage and deb run on older x86_64 CPUs.
+- The desktop app starts each helper (ffmpeg, yt-dlp) in its own process group, and a quit ends
+  the whole group, so the children that yt-dlp starts also stop. The CLI does not change.
+- Quit waits up to 10 s for a running setup step and then up to 3 s for each thread. If something
+  does not stop in time, the app exits with `_exit`, so llama.cpp does not abort at exit.
+- Setup stays usable after a panic. If you change the tool source while setup runs, the change
+  applies when the current run ends. When the engine does not start, the app checks the model files and deletes
+  the damaged ones, so **Try again** downloads them again.
+- The yt-dlp notice now says that the standalone binary is GPL-3.0-or-later (its source is under
+  The Unlicense). The notice also lists usls.
+- A new pinned ffmpeg build replaces an installed one (a sha256 stamp in `bin/`).
+- App Nap is off for Retrace (`LSAppNapIsDisabled`), so macOS does not throttle an ingest when the
+  window is behind another app. The smoke runs for this release ran on a busy machine, so they do
+  not give a clean speed comparison.
+- Finder lists Retrace under **Open With** for common video types. The bundled setup pages have a
+  strict CSP. The app keeps 14 days of logs. A clip download never replaces an existing file.
+- A quit during the first-run download stops the download within one read and keeps the partial
+  file, so the next start resumes it. Setup shows no error for a quit.
+- An error in the audio loop now ends, reaps and deregisters the audio ffmpeg, so a later stop
+  never signals a pid that the system has given to another process.
+- Linux: the app opens a video given as a bare argument (`Retrace video.mp4`, a file association,
+  or a second launch), and the `.desktop` file passes the files (`%F`) and lists the video types.
+- Closing the main window quits the app, also while the Add Camera window is open.
+- Recording the installed tool paths no longer overwrites a settings change made while setup runs.
+- The bundle copyright line names the copyright holder.
+
+### Known limitations
+- The builds have an ad-hoc signature only. Apple does not notarize them. On macOS 14, right-click
+  the app and select **Open**. On macOS 15 and later, use System Settings > Privacy & Security >
+  **Open Anyway**.
+- Today the only release artifact is for macOS on Apple Silicon (macOS 14 or later). The Linux
+  build is best effort.
+- The UI page still loads its fonts from Google Fonts.
+- One indexed video uses much memory: peak RSS was about 6.6 GiB with SigLIP 2 and about 2.4 GiB
+  with EmbeddingGemma 2 for `vtest.avi`.
+- The app has no menu item to change the embedder. Change `"embedder"` in `settings.json` and open
+  the app again.
+
 ## [0.4.1] — 2026-10-16
 
 ### Fixed
@@ -91,7 +216,8 @@ First public release.
 - The UI requested a favicon that did not exist (one console error per page load).
 - Clippy clean-up across the crate (collapsed `if`s, needless borrows, `is_multiple_of`).
 
-[Unreleased]: https://github.com/humancto/retrace/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/humancto/retrace/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/humancto/retrace/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/humancto/retrace/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/humancto/retrace/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/humancto/retrace/releases/tag/v0.3.0

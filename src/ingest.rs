@@ -182,6 +182,8 @@ impl IngestChildren {
         }
         // 2. The frame pipe and the recorder: kill, then wait, so neither becomes a zombie.
         if let Some(mut c) = self.ffmpeg.take() {
+            // Deregister while the pid is still unreaped, so it cannot belong to another process.
+            unregister_child(c.as_inner().id());
             let _ = c.kill();
             let _ = c.wait();
         }
@@ -224,10 +226,12 @@ impl Drop for IngestChildren {
 }
 
 fn yt_dlp(args: &[&str]) -> Result<std::process::Output> {
-    std::process::Command::new("yt-dlp")
-        .args(args)
-        .output()
-        .context("run yt-dlp (brew install yt-dlp, or pip install yt-dlp)")
+    output_tracked(
+        std::process::Command::new(crate::tools::yt_dlp())
+            .args(crate::tools::yt_dlp_ffmpeg_args())
+            .args(args),
+    )
+    .context("run yt-dlp (brew install yt-dlp, or pip install yt-dlp)")
 }
 
 /// Decides how a source is ingested before anything starts. A YouTube *live* URL (or any stream URL)
@@ -372,7 +376,7 @@ pub(crate) fn live_input_args(url: &str) -> Vec<String> {
 /// plays back up to its last complete fragment.
 fn spawn_recorder(url: &str, dir: &Path) -> Result<std::process::Child> {
     std::fs::create_dir_all(dir)?;
-    let mut c = std::process::Command::new("ffmpeg");
+    let mut c = std::process::Command::new(crate::tools::ffmpeg());
     c.args(["-nostdin", "-hide_banner", "-loglevel", "error"]);
     c.args(live_input_args(url));
     c.args(["-i", url])
@@ -400,6 +404,7 @@ fn spawn_recorder(url: &str, dir: &Path) -> Result<std::process::Child> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::inherit());
+    isolate(&mut c);
     c.spawn().context("spawn ffmpeg recorder")
 }
 
@@ -420,7 +425,7 @@ fn sweep_recordings(dir: &Path, retain_hours: f64) {
 }
 
 pub fn probe_duration_ms(path: &str) -> Option<i64> {
-    let out = std::process::Command::new("ffprobe")
+    let out = std::process::Command::new(crate::tools::ffprobe())
         .args([
             "-v",
             "error",
@@ -436,26 +441,86 @@ pub fn probe_duration_ms(path: &str) -> Option<i64> {
     s.trim().parse::<f64>().ok().map(|d| (d * 1000.0) as i64)
 }
 
-/// Helper processes (recorders) so a Ctrl-C / SIGTERM on the main process can take them down;
-/// otherwise an orphaned ffmpeg would keep recording after Retrace exits.
+/// Helper processes (recorders, frame and audio pipes, yt-dlp) so a Ctrl-C / SIGTERM on the main
+/// process can take them down; otherwise an orphaned ffmpeg would keep recording after Retrace
+/// exits.
 static CHILDREN: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
 
-fn register_child(pid: u32) {
+/// Start each helper in its own process group, and end the whole group on `kill_children`.
+/// Off by default, so the CLI keeps today's behaviour (a terminal Ctrl-C reaches the helpers
+/// through the shared group). The desktop app turns it on: yt-dlp runs children of its own
+/// (the PyInstaller binary, ffmpeg for merges) that a plain `kill <pid>` would leave behind.
+static PROCESS_GROUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// See [`PROCESS_GROUPS`]. Call before any ingest starts.
+pub fn set_child_process_groups(on: bool) {
+    PROCESS_GROUPS.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn process_groups() -> bool {
+    PROCESS_GROUPS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Puts `cmd` in a new process group when [`set_child_process_groups`] is on (Unix only).
+pub(crate) fn isolate(cmd: &mut std::process::Command) {
+    #[cfg(unix)]
+    if process_groups() {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = cmd;
+}
+
+pub(crate) fn register_child(pid: u32) {
     if let Ok(mut v) = CHILDREN.lock() {
         v.push(pid);
     }
 }
 
-fn unregister_child(pid: u32) {
+pub(crate) fn unregister_child(pid: u32) {
     if let Ok(mut v) = CHILDREN.lock() {
         v.retain(|p| *p != pid);
     }
 }
 
-/// Terminates every registered helper process (best effort, portable: uses `kill`).
+/// Like `Command::output`, but the child is registered for [`kill_children`] while it runs
+/// (and in its own process group when that is on). The `CHILDREN` lock is never held while the
+/// child runs.
+pub(crate) fn output_tracked(
+    cmd: &mut std::process::Command,
+) -> std::io::Result<std::process::Output> {
+    isolate(cmd);
+    let child = cmd
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let pid = child.id();
+    register_child(pid);
+    let out = child.wait_with_output();
+    // After the reap: a quit that runs in this short window may signal a pid that is already
+    // free. `wait_with_output` cannot be split, and the window is microseconds long.
+    unregister_child(pid);
+    out
+}
+
+/// Terminates every registered helper process (best effort, portable: uses `kill`). With process
+/// groups on, the helper's whole group gets the signal, so its own children end too.
 pub fn kill_children() {
     let pids: Vec<u32> = CHILDREN.lock().map(|v| v.clone()).unwrap_or_default();
-    for pid in pids {
+    kill_pids(&pids, cfg!(unix) && process_groups());
+}
+
+fn kill_pids(pids: &[u32], groups: bool) {
+    for &pid in pids {
+        if groups {
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", "--", &format!("-{pid}")])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
         let _ = std::process::Command::new("kill")
             .arg(pid.to_string())
             .stdout(std::process::Stdio::null())
@@ -625,7 +690,7 @@ pub fn run_ingest(
         );
     }
 
-    let mut cmd = FfmpegCommand::new();
+    let mut cmd = FfmpegCommand::new_with_path(crate::tools::ffmpeg());
     cmd.args(["-nostdin"]); // ffmpeg-sidecar sets its own loglevel; it parses stderr to learn the output frame format
     if live {
         cmd.args(live_input_args(&url));
@@ -637,8 +702,15 @@ pub fn run_ingest(
             &format!("fps={},scale={}:-2", opts.fps, opts.width),
         ])
         .rawvideo();
-    let mut child = cmd.spawn().context("spawn ffmpeg (is ffmpeg on PATH?)")?;
+    isolate(cmd.as_inner_mut());
+    let mut child = cmd.spawn().with_context(|| {
+        format!(
+            "spawn {} (is ffmpeg installed?)",
+            crate::tools::ffmpeg().display()
+        )
+    })?;
     let ffmpeg_pid = child.as_inner().id();
+    register_child(ffmpeg_pid);
     children.ffmpeg = Some(child);
 
     // Stall watchdog (live sources). An HTTP/HLS server can keep the connection open and send
@@ -1119,6 +1191,16 @@ pub fn run_live_forever(opts: IngestOpts, stop: std::sync::Arc<std::sync::atomic
 mod tests {
     use super::*;
 
+    /// Serializes the tests that touch the shared `CHILDREN` list, so one test's registered pid
+    /// is never seen (or killed) half-way through another test.
+    static CHILDREN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn children_lock() -> std::sync::MutexGuard<'static, ()> {
+        CHILDREN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// True while `pid` is a live or zombie process of ours (a reaped child is neither).
     #[cfg(unix)]
     fn process_exists(pid: u32) -> bool {
@@ -1131,7 +1213,53 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn group_kill_ends_the_helper_and_its_children() {
+        let _g = children_lock();
+        use std::io::BufRead;
+        use std::os::unix::process::CommandExt;
+        // A helper that starts a child of its own and waits, as yt-dlp does.
+        let mut helper = std::process::Command::new("sh")
+            .args(["-c", "sleep 300 & echo $!; wait"])
+            .stdout(std::process::Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .expect("spawn sh");
+        let mut line = String::new();
+        std::io::BufReader::new(helper.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let grandchild: u32 = line.trim().parse().unwrap();
+        kill_pids(&[helper.id()], true);
+        let _ = helper.wait();
+        let gone = (0..50).any(|_| {
+            std::thread::sleep(Duration::from_millis(50));
+            !process_exists(grandchild)
+                || std::process::Command::new("ps")
+                    .args(["-o", "stat=", "-p", &grandchild.to_string()])
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).starts_with('Z'))
+                    .unwrap_or(false)
+        });
+        assert!(gone, "the helper's own child {grandchild} must end too");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn output_tracked_deregisters_after_the_run() {
+        let _g = children_lock();
+        // `$$` is the pid of the spawned `sh` itself, so the test checks only its own entry.
+        let out = output_tracked(std::process::Command::new("sh").args(["-c", "echo $$"])).unwrap();
+        let pid: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+        assert!(
+            !CHILDREN.lock().unwrap().contains(&pid),
+            "pid {pid} still registered after the run"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn shutdown_reaps_the_recorder_and_forgets_the_user_agent() {
+        let _g = children_lock();
         let url = "https://rr1.googlevideo.com/test-shutdown-reaps";
         remember_user_agent(url, "UA/1");
         assert_eq!(user_agent_args(url)[1], "UA/1");

@@ -6,6 +6,7 @@ use crate::models::cosine;
 use anyhow::Result;
 use std::time::{Duration, Instant};
 
+#[derive(Default)]
 pub struct RuleEngine {
     rules: Vec<Rule>,
     loaded: Option<Instant>,
@@ -13,10 +14,7 @@ pub struct RuleEngine {
 
 impl RuleEngine {
     pub fn new() -> Self {
-        Self {
-            rules: vec![],
-            loaded: None,
-        }
+        Self::default()
     }
 
     fn refresh(&mut self, db: &Db) -> Result<()> {

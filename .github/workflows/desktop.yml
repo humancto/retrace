@@ -1,0 +1,121 @@
+name: Desktop
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "src/**"
+      - "crates/**"
+      - "ui/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  LINT_TOOLCHAIN: "1.91.1"
+  # rust-toolchain.toml says "stable", and it wins over the toolchain the setup action installs as
+  # the default. This env var wins over the file, so clippy runs on the pinned version.
+  RUSTUP_TOOLCHAIN: "1.91.1"
+  # Portable llama.cpp CPU code (no -march=native) and the app's minimum macOS.
+  LLAMA_NATIVE: "0"
+  MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+# Read-only by default; only the release job (tags) gets a write token.
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: desktop (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    # macOS is the supported desktop build; Linux is best effort for now.
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            os: macos-14
+            optional: false
+            bundles: app,dmg
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            optional: true
+            bundles: appimage,deb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.LINT_TOOLCHAIN }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop
+      - name: system packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev cmake clang patchelf
+      - name: cmake (macOS)
+        if: runner.os == 'macOS'
+        run: cmake --version || brew install cmake
+      - name: tauri-cli
+        run: cargo install tauri-cli --version "=2.12.3" --locked
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        # Same allows as the root job: clippy also lints the retrace and llama-embed path members.
+        run: cargo clippy -p retrace-desktop --all-targets -- -D warnings -A clippy::too_many_arguments -A clippy::large_enum_variant
+      - name: test
+        run: cargo test -p retrace-desktop
+      - name: build
+        working-directory: desktop/src-tauri
+        run: cargo tauri build --bundles ${{ matrix.bundles }}
+      - name: collect bundles
+        id: collect
+        shell: bash
+        run: |
+          mkdir -p dist
+          find target/release/bundle \( -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' \) -exec cp {} dist/ \;
+          if [ -d target/release/bundle/macos/Retrace.app ]; then
+            (cd target/release/bundle/macos && ditto -c -k --keepParent Retrace.app "$GITHUB_WORKSPACE/dist/Retrace_macos_aarch64.app.zip")
+          fi
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: retrace-desktop-${{ runner.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    # One job attaches both legs' bundles, so two legs never race to create the release.
+    name: attach to release
+    needs: desktop
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: retrace-desktop-*
+          merge-multiple: true
+          path: dist
+      - name: create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          ls -l dist
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "See CHANGELOG.md." --verify-tag
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber

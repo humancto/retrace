@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Retrace",
+  "version": "0.5.0",
+  "mainBinaryName": "Retrace",
+  "identifier": "com.humancto.retrace",
+  "build": {
+    "frontendDist": "../setup-ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Video",
+    "shortDescription": "Ask your videos what happened. Fully local.",
+    "longDescription": "Retrace indexes video on your own machine and lets you search it in plain words. Nothing leaves the machine.",
+    "copyright": "Copyright (c) 2026 Archith Rapaka. MIT License.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "mp4",
+          "mov",
+          "m4v",
+          "avi",
+          "mkv",
+          "webm"
+        ],
+        "name": "Video",
+        "role": "Viewer"
+      }
+    ],
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/retrace.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/retrace.desktop"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "signingIdentity": "-"
+    }
+  }
+}

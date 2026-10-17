@@ -14,6 +14,9 @@ use usls::{
     models::{Clip, DEIM},
 };
 
+pub mod fetch;
+pub use fetch::{ModelFile, Progress, prefetch};
+
 pub const COCO_PERSON_VEHICLE: &[usize] = &[0, 1, 2, 3, 5, 7]; // person, bicycle, car, motorcycle, bus, truck
 
 #[derive(Debug, Clone)]
@@ -140,6 +143,8 @@ enum Inner {
     },
     #[cfg(feature = "gemma-native")]
     Native(llama_embed::Engine),
+    /// The model was freed by [`Embedder::release`].
+    Released,
 }
 
 pub struct Embedder {
@@ -344,6 +349,14 @@ impl Embedder {
         })
     }
 
+    /// Frees the model now (its weights and any GPU buffers); every later embed call fails. A
+    /// process that loaded EmbeddingGemma natively must call this before it exits: llama.cpp's
+    /// Metal device is a C++ static, and its destructor aborts if model buffers are still alive.
+    pub fn release(&mut self) {
+        self.inner = Inner::Released;
+        self.audio = false;
+    }
+
     fn remote(&self, items: &[Item]) -> Result<Vec<Vec<f32>>> {
         let Inner::Remote { url, agent } = &self.inner else {
             anyhow::bail!("not a remote embedder")
@@ -408,6 +421,7 @@ impl Embedder {
                 let v = eng.embed(llama_embed::Input::Text(&prompt))?;
                 Ok((prompt, v))
             }
+            Inner::Released => anyhow::bail!("the embedder was released"),
         }
     }
 
@@ -435,6 +449,7 @@ impl Embedder {
                 let prompt = format!("task: search result | query: {text}");
                 eng.embed(llama_embed::Input::Text(&prompt))
             }
+            Inner::Released => anyhow::bail!("the embedder was released"),
         }
     }
 
@@ -477,6 +492,7 @@ impl Embedder {
                     )]))
                 })
                 .collect(),
+            Inner::Released => anyhow::bail!("the embedder was released"),
         }
     }
 
@@ -506,6 +522,7 @@ impl Embedder {
                     .collect();
                 eng.embed(llama_embed::Input::Images(views))
             }
+            Inner::Released => anyhow::bail!("the embedder was released"),
         }
     }
 
@@ -576,4 +593,87 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f64 {
         .zip(b)
         .map(|(x, y)| (*x as f64) * (*y as f64))
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn released_embedder_fails_cleanly() {
+        let mut e = Embedder {
+            inner: Inner::Remote {
+                url: "http://127.0.0.1:9".into(),
+                agent: ureq::Agent::new_with_defaults(),
+            },
+            name: "test".into(),
+            dim: 4,
+            audio: true,
+        };
+        e.release();
+        assert!(!e.audio);
+        let err = e.embed_text("a person").unwrap_err().to_string();
+        assert!(err.contains("released"), "{err}");
+        assert!(e.embed_query("a person").is_err());
+        assert!(e.embed_images(&[]).is_err());
+        assert!(e.embed_image_set(&[]).is_err());
+        assert!(e.embed_audio_wav(&[]).is_err());
+    }
+
+    #[test]
+    fn resolve_prefers_models_dir_file() {
+        let t = tempfile::tempdir().unwrap();
+        let d = Some(t.path().to_path_buf());
+        let remote = format!("{GH}/deim/dfine-s-coco.onnx");
+        // Missing local file: the remote spec passes through to usls.
+        assert_eq!(resolve(&d, "deim/dfine-s-coco.onnx", &remote), remote);
+        std::fs::create_dir_all(t.path().join("deim")).unwrap();
+        std::fs::write(t.path().join("deim/dfine-s-coco.onnx"), b"x").unwrap();
+        assert_eq!(
+            resolve(&d, "deim/dfine-s-coco.onnx", &remote),
+            t.path().join("deim/dfine-s-coco.onnx").to_string_lossy()
+        );
+        assert_eq!(resolve(&None, "deim/dfine-s-coco.onnx", &remote), remote);
+    }
+
+    #[test]
+    fn siglip_local_uses_models_dir_once_vision_exists() {
+        let t = tempfile::tempdir().unwrap();
+        let d = Some(t.path().to_path_buf());
+        let base = t.path().join("siglip2-b16-256");
+        let vision = base
+            .join("vision_model.onnx")
+            .to_string_lossy()
+            .into_owned();
+        let cfg = format!(
+            "{:?}",
+            siglip_local(Config::siglip2_b16_256(), &d, "siglip2-b16-256")
+        );
+        assert!(!cfg.contains(&vision), "no local copy yet");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("vision_model.onnx"), b"x").unwrap();
+        let cfg = format!(
+            "{:?}",
+            siglip_local(Config::siglip2_b16_256(), &d, "siglip2-b16-256")
+        );
+        assert!(cfg.contains(&vision), "{cfg}");
+        assert!(cfg.contains(&*base.join("text_model.onnx").to_string_lossy()));
+    }
+
+    #[cfg(feature = "gemma-native")]
+    #[test]
+    fn load_native_reads_models_dir() {
+        let t = tempfile::tempdir().unwrap();
+        let s = ModelSettings {
+            models_dir: Some(t.path().to_path_buf()),
+            embedder: "gemma2-native:256".into(),
+            ..ModelSettings::default()
+        };
+        let err = Embedder::load(&s).err().expect("no gguf files");
+        let want = t.path().join("embeddinggemma-2");
+        assert!(
+            format!("{err:#}").contains(&*want.to_string_lossy()),
+            "{err:#}"
+        );
+    }
 }

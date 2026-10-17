@@ -31,7 +31,7 @@ pub struct AudioOpts {
 
 /// True when ffprobe sees an audio stream.
 pub fn has_audio(url: &str) -> bool {
-    let mut c = std::process::Command::new("ffprobe");
+    let mut c = std::process::Command::new(crate::tools::ffprobe());
     c.args(crate::ingest::user_agent_args(url));
     if crate::ingest::is_http(url) {
         // Fail the probe when the server sends nothing for 20 s, instead of blocking the ingest.
@@ -113,6 +113,25 @@ fn rms(pcm: &[i16]) -> f32 {
     (sum / pcm.len() as f64).sqrt() as f32
 }
 
+/// The audio ffmpeg, owned so that its drop runs the same cleanup on every exit path.
+struct AudioChild {
+    child: std::process::Child,
+    pid: Arc<std::sync::Mutex<Option<u32>>>,
+}
+
+impl Drop for AudioChild {
+    fn drop(&mut self) {
+        // Clear the published pid and the registration before the reap, so no caller can
+        // signal a pid that the kernel has already given to another process.
+        if let Ok(mut p) = self.pid.lock() {
+            *p = None;
+        }
+        crate::ingest::unregister_child(self.child.id());
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 /// Decodes, windows and embeds until the stream ends or `stop` is set. Returns windows stored.
 /// The ffmpeg child's pid is published through `pid` so the caller can end a live stream early.
 pub fn run_audio(
@@ -128,7 +147,7 @@ pub fn run_audio(
         .map(|c| c.id)
         .context("camera row missing")?;
 
-    let mut c = std::process::Command::new("ffmpeg");
+    let mut c = std::process::Command::new(crate::tools::ffmpeg());
     c.args(["-nostdin", "-hide_banner", "-loglevel", "error"]);
     if opts.live {
         c.args(crate::ingest::live_input_args(&opts.url));
@@ -147,11 +166,18 @@ pub fn run_audio(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit());
-    let mut child = c.spawn().context("spawn ffmpeg (audio)")?;
+    crate::ingest::isolate(&mut c);
+    let child = c.spawn().context("spawn ffmpeg (audio)")?;
+    crate::ingest::register_child(child.id());
     if let Ok(mut p) = pid.lock() {
         *p = Some(child.id());
     }
-    let mut out = child.stdout.take().context("ffmpeg audio stdout")?;
+    // From here on every exit path, an early `?` included, ends and reaps the helper.
+    let mut child = AudioChild {
+        child,
+        pid: pid.clone(),
+    };
+    let mut out = child.child.stdout.take().context("ffmpeg audio stdout")?;
 
     let win = (opts.win_s * SAMPLE_RATE as f32) as usize;
     let hop = (opts.hop_s * SAMPLE_RATE as f32) as usize;
@@ -222,13 +248,8 @@ pub fn run_audio(
             Err(e) => tracing::warn!(cam = %opts.cam, "audio embed failed: {e:#}"),
         }
     }
-    // Clear the published pid before the reap, so a caller cannot signal a pid that the kernel
-    // has already given to another process.
-    if let Ok(mut p) = pid.lock() {
-        *p = None;
-    }
-    let _ = child.kill();
-    let _ = child.wait();
+    drop(out);
+    drop(child);
     tracing::info!(cam = %opts.cam, windows = stored, "audio windows done");
     Ok(stored)
 }
