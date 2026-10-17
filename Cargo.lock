@@ -4568,6 +4568,7 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "dirs",
+ "libc",
  "retrace",
  "serde",
  "serde_json",

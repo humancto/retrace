@@ -6,6 +6,7 @@ fn main() {
             "setup_state",
             "retry_setup",
             "use_system_tools",
+            "use_download_tools",
             "add_camera",
         ]),
     ))

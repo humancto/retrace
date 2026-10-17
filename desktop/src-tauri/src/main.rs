@@ -45,7 +45,12 @@ pub fn parse_open_args(args: &[String], cwd: &Path) -> Vec<PathBuf> {
 
 #[tauri::command]
 fn setup_state(ctx: tauri::State<'_, Ctx>) -> setup::View {
-    ctx.setup.lock().unwrap().clone()
+    // The page calls this once when its script runs: proof that the page loaded under the CSP.
+    tracing::info!("setup page connected");
+    ctx.setup
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
 }
 
 #[tauri::command]
@@ -55,13 +60,27 @@ fn retry_setup(app: AppHandle) {
 
 #[tauri::command]
 fn use_system_tools(app: AppHandle) {
+    set_tool_source(&app, settings::ToolSource::System);
+}
+
+/// The way back from "Use the installed tools", for when they were removed later.
+#[tauri::command]
+fn use_download_tools(app: AppHandle) {
+    set_tool_source(&app, settings::ToolSource::Download);
+}
+
+/// Saves the choice, then runs setup with it: now, or as soon as the setup that runs now ends.
+fn set_tool_source(app: &AppHandle, source: settings::ToolSource) {
     {
         let ctx = app.state::<Ctx>();
-        let mut s = ctx.settings.lock().unwrap();
-        s.tools = settings::ToolSource::System;
-        let _ = s.save(&ctx.paths.settings);
+        let mut s = ctx.settings.lock().unwrap_or_else(PoisonError::into_inner);
+        s.tools = source;
+        if let Err(e) = s.save(&ctx.paths.settings) {
+            tracing::warn!("cannot save settings: {e:#}");
+        }
     }
-    setup::start(&app);
+    tracing::info!(?source, "tool source changed");
+    setup::start(app);
 }
 
 /// Async, so Tauri runs it off the main thread: the stream check can run yt-dlp for seconds
@@ -95,6 +114,8 @@ fn main() {
     );
     // Every ffmpeg/ffprobe/yt-dlp the engine runs comes from <root>/bin first.
     retrace::tools::set_tools_dir(&paths.bin);
+    // Each helper in its own process group, so a quit also ends the children yt-dlp starts.
+    retrace::ingest::set_child_process_groups(true);
 
     let settings = settings::Settings::load(&paths.settings);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
@@ -127,6 +148,7 @@ fn main() {
             setup_state,
             retry_setup,
             use_system_tools,
+            use_download_tools,
             add_camera
         ])
         .on_window_event(|window, event| {
@@ -162,7 +184,11 @@ fn main() {
             }
         }
         // Last resort if the exit could not be held; a no-op after a full quit.
-        RunEvent::Exit => cleanup(app),
+        RunEvent::Exit => {
+            if !cleanup(app) {
+                exit_now();
+            }
+        }
         #[cfg(target_os = "macos")]
         RunEvent::Opened { urls } => {
             let ctx = app.state::<Ctx>();
@@ -251,26 +277,61 @@ fn request_quit(app: &AppHandle) {
         .spawn(move || {
             // Exit even if cleanup panics: otherwise quit_done stays false, every later
             // ExitRequested is held, and only a force kill ends the app.
-            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cleanup(&a))).is_err() {
-                tracing::error!("cleanup panicked; exiting anyway");
-            }
+            let clean = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cleanup(&a)))
+            {
+                Ok(clean) => clean,
+                Err(_) => {
+                    tracing::error!("cleanup panicked; exiting anyway");
+                    false
+                }
+            };
             a.state::<Ctx>().quit_done.store(true, Ordering::SeqCst);
+            if !clean {
+                exit_now();
+            }
             a.exit(0);
         });
     if let Err(e) = spawned {
         tracing::error!("cannot start the quit thread: {e}; cleaning up in place");
-        cleanup(app);
+        if !cleanup(app) {
+            exit_now();
+        }
         app.exit(0);
     }
 }
 
-/// Quit without orphans: stop ingest, wait for the threads (≤3 s) so their own teardown runs,
-/// kill registered helpers, stop the server, then end any child process that is still left.
-fn cleanup(app: &AppHandle) {
+/// Ends the process without the C++ static destructors. Used when a thread that may own
+/// llama.cpp Metal buffers (an engine load, a gemma ingest or live thread) did not stop in time:
+/// a normal exit would run `ggml_metal_device_free` under it, which asserts and aborts (exit 134).
+/// The log is flushed before this runs; child processes are already ended.
+fn exit_now() -> ! {
+    #[cfg(unix)]
+    // SAFETY: `_exit` takes no pointers and does not return; skipping atexit handlers and static
+    // destructors is the purpose.
+    unsafe {
+        libc::_exit(0)
+    }
+    #[cfg(not(unix))]
+    std::process::exit(0)
+}
+
+/// How long a quit waits for a running setup (a model download or an engine load, which can
+/// load EmbeddingGemma for several seconds) to notice the stop flag.
+const SETUP_BUDGET: Duration = Duration::from_secs(10);
+/// How long a quit waits for each worker or live thread, after the setup wait.
+const THREAD_BUDGET: Duration = Duration::from_secs(3);
+
+/// Quit without orphans: stop ingest, wait for setup and then for each thread (each with its own
+/// budget) so their own teardown runs, kill registered helpers, stop the server, then end any
+/// child process that is still left. Returns false when something did not stop in time; the
+/// caller then exits with [`exit_now`]. A second call (the `Exit` event after a full quit) is a
+/// no-op that returns true.
+fn cleanup(app: &AppHandle) -> bool {
     let ctx = app.state::<Ctx>();
     if ctx.cleaned_up.swap(true, Ordering::SeqCst) {
-        return;
+        return true;
     }
+    let mut clean = true;
     tracing::info!("quitting: stopping ingest");
     ctx.stop.store(true, Ordering::SeqCst);
     // The engine UI keeps an EventSource (/api/live) open, and a graceful server stop waits for
@@ -281,17 +342,21 @@ fn cleanup(app: &AppHandle) {
     {
         let _ = w.navigate(blank);
     }
-    let deadline = Instant::now() + Duration::from_secs(3);
     // An engine start that is still loading the embedder checks `stop` when the load returns
-    // and frees it itself; give it until the deadline so it does not race the exit.
-    while ctx.setup_running.load(Ordering::SeqCst) && Instant::now() < deadline {
+    // and frees it itself; give it its own budget so it does not race the exit.
+    let until = Instant::now() + SETUP_BUDGET;
+    while ctx.setup_running.load(Ordering::SeqCst) && Instant::now() < until {
         std::thread::sleep(Duration::from_millis(50));
+    }
+    if ctx.setup_running.load(Ordering::SeqCst) {
+        tracing::warn!("setup did not stop in time");
+        clean = false;
     }
     let threads = std::mem::take(&mut *ctx.threads.lock().unwrap_or_else(PoisonError::into_inner));
     for (name, done) in threads {
-        let left = deadline.saturating_duration_since(Instant::now());
-        if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = done.recv_timeout(left) {
+        if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = done.recv_timeout(THREAD_BUDGET) {
             tracing::warn!("{name} did not stop in time");
+            clean = false;
         }
     }
     retrace::ingest::kill_children();
@@ -306,7 +371,11 @@ fn cleanup(app: &AppHandle) {
     }
     kill_child_processes();
     ctx.quit_done.store(true, Ordering::SeqCst);
-    tracing::info!("quit complete");
+    if clean {
+        tracing::info!("quit complete");
+    } else {
+        tracing::warn!("quit complete; exiting without static destructors");
+    }
     // `App::run` exits the process, so drop the log guard here to flush the last lines.
     drop(
         ctx.log_guard
@@ -314,6 +383,7 @@ fn cleanup(app: &AppHandle) {
             .unwrap_or_else(PoisonError::into_inner)
             .take(),
     );
+    clean
 }
 
 /// Frees the engine (embedder, then index) before the process exits. The EmbeddingGemma embedder

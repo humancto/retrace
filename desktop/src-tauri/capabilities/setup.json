@@ -7,6 +7,7 @@
     "core:event:default",
     "allow-setup-state",
     "allow-retry-setup",
-    "allow-use-system-tools"
+    "allow-use-system-tools",
+    "allow-use-download-tools"
   ]
 }

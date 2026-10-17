@@ -63,6 +63,7 @@ footer{margin-top:28px;color:var(--muted);font-size:13px}
     <p>
       <button class="primary" id="retry">Try again</button>
       <button id="system" hidden>Use the installed tools</button>
+      <button id="download" hidden>Download the tools</button>
     </p>
   </div>
 
@@ -106,6 +107,7 @@ function render(v){
   const canSystem = v.system_tools_found && v.tools === 'download';
   $('system').hidden = !(v.failed && canSystem);
   $('systemw').hidden = !(v.warning && canSystem);
+  $('download').hidden = !(v.failed && v.tools === 'system');
 }
 async function boot(){
   if(!T){ $('phase').textContent = 'This page must open inside the Retrace app.'; return; }
@@ -115,7 +117,8 @@ async function boot(){
 function showErr(e){ $('errtext').textContent = String(e); $('err').classList.add('show'); }
 $('retry').onclick = () => { $('err').classList.remove('show'); T.core.invoke('retry_setup').catch(showErr); };
 $('system').onclick = $('systemw').onclick = () => { $('err').classList.remove('show'); T.core.invoke('use_system_tools').catch(showErr); };
-boot();
+$('download').onclick = () => { $('err').classList.remove('show'); T.core.invoke('use_download_tools').catch(showErr); };
+boot().catch(showErr);
 </script>
 </body>
 </html>
