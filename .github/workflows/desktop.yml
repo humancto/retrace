@@ -12,6 +12,8 @@ on:
       - "ui/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".cargo/**"
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
 
