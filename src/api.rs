@@ -771,10 +771,131 @@ async fn clip(State(st): S, Query(q): Query<ClipQ>) -> Response {
         .into_response()
 }
 
-pub async fn serve(state: Arc<AppState>, bind: &str) -> Result<()> {
-    let app = router(state);
-    let listener = tokio::net::TcpListener::bind(bind).await?;
-    tracing::info!("retrace UI on http://{bind}/");
-    axum::serve(listener, app).await?;
-    Ok(())
+/// Triggers a graceful shutdown of a server started with [`bind`]. Cheap to clone; triggering more
+/// than once, or after the server has stopped, is harmless.
+#[derive(Clone)]
+pub struct Shutdown(Arc<tokio::sync::watch::Sender<bool>>);
+
+impl Shutdown {
+    pub fn trigger(&self) {
+        self.0.send_replace(true);
+    }
+}
+
+/// A bound server that has not started yet. Await it (on a tokio runtime) to serve until
+/// [`Shutdown::trigger`] is called; in-flight requests then finish and the future returns.
+pub struct ServeHandle {
+    shutdown: Shutdown,
+    fut: futures::future::BoxFuture<'static, Result<()>>,
+}
+
+impl ServeHandle {
+    pub fn shutdown(&self) -> Shutdown {
+        self.shutdown.clone()
+    }
+}
+
+impl std::future::IntoFuture for ServeHandle {
+    type Output = Result<()>;
+    type IntoFuture = futures::future::BoxFuture<'static, Result<()>>;
+    fn into_future(self) -> Self::IntoFuture {
+        self.fut
+    }
+}
+
+/// Binds the API + UI to `addr` now (so the port is known before anything is served; use port 0
+/// for any free port) and returns the bound address plus the server future. Needs no runtime;
+/// the returned future must run on a tokio runtime.
+pub fn bind(
+    state: Arc<AppState>,
+    addr: impl std::net::ToSocketAddrs,
+) -> Result<(std::net::SocketAddr, ServeHandle)> {
+    bind_router(router(state), addr)
+}
+
+fn bind_router(
+    app: Router,
+    addr: impl std::net::ToSocketAddrs,
+) -> Result<(std::net::SocketAddr, ServeHandle)> {
+    let std_listener = std::net::TcpListener::bind(addr)?;
+    std_listener.set_nonblocking(true)?;
+    let local = std_listener.local_addr()?;
+    let (tx, mut rx) = tokio::sync::watch::channel(false);
+    let fut = Box::pin(async move {
+        let listener = tokio::net::TcpListener::from_std(std_listener)?;
+        tracing::info!("retrace UI on http://{local}/");
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                // Err means every Shutdown handle is gone: nobody can ask to stop, so serve on.
+                if rx.wait_for(|stop| *stop).await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            })
+            .await?;
+        Ok(())
+    });
+    Ok((
+        local,
+        ServeHandle {
+            shutdown: Shutdown(Arc::new(tx)),
+            fut,
+        },
+    ))
+}
+
+/// Serves the API + UI on `bind` until the process exits (the CLI path).
+pub async fn serve(state: Arc<AppState>, bind_addr: &str) -> Result<()> {
+    let (_, handle) = bind(state, bind_addr)?;
+    handle.await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn fetch_ping(addr: std::net::SocketAddr) -> String {
+        let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        s.write_all(b"GET /ping HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).await.unwrap();
+        out
+    }
+
+    #[test]
+    fn bind_reports_port_then_shuts_down_gracefully() {
+        let app = Router::new().route("/ping", get(|| async { "pong" }));
+        // No runtime exists here: bind must work synchronously and report the real port.
+        let (addr, handle) = bind_router(app, "127.0.0.1:0").unwrap();
+        assert_ne!(addr.port(), 0);
+        let stop = handle.shutdown();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            let server = tokio::spawn(handle.into_future());
+            assert!(fetch_ping(addr).await.ends_with("pong"));
+            stop.trigger();
+            stop.trigger();
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .expect("server stops after trigger")
+                .unwrap()
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn trigger_before_start_still_stops() {
+        let app = Router::new().route("/ping", get(|| async { "pong" }));
+        let (_, handle) = bind_router(app, "127.0.0.1:0").unwrap();
+        handle.shutdown().trigger();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            tokio::time::timeout(Duration::from_secs(5), handle.into_future())
+                .await
+                .expect("server stops")
+                .unwrap();
+        });
+    }
 }
