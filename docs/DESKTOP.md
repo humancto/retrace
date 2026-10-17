@@ -89,10 +89,14 @@ links to other sites in your default browser.
 
 When you quit, the app does these steps:
 
-1. It stops the ingest and waits up to 3 seconds for the threads.
-2. It stops all registered child processes and stops the server.
+1. It stops the ingest. It waits up to 10 seconds for a running setup step (a download or an engine load), then
+   up to 3 seconds for each ingest or live thread.
+2. It stops all registered child processes and stops the server. Each helper (ffmpeg, yt-dlp) runs in its own
+   process group, so the children that yt-dlp starts stop too.
 3. It frees the embedder.
 4. It kills each child process that is still running.
+5. If a thread or a setup step did not stop in time, the app exits without the C++ static destructors
+   (`_exit`). A thread that did not stop can still hold llama.cpp Metal buffers.
 
 The embedder must be free before the process exits. EmbeddingGemma keeps llama.cpp Metal buffers, and llama.cpp
 stops the process with an error at exit if these buffers are still allocated. An ingest that a quit stops is
@@ -109,7 +113,7 @@ The app keeps all data in one folder:
 | `bin/`                | ffmpeg, ffprobe, yt-dlp and their licence files            |
 | `models/`             | model weights (see below)                                  |
 | `cache/`              | downloaded web videos                                      |
-| `logs/`               | `retrace.log`, a new file each day                         |
+| `logs/`               | `retrace.log`, a new file each day (the app keeps 14 days) |
 | `rec/`                | live camera recordings                                     |
 | `index-<embedder>.db` | the search index for one embedder                          |
 | `crops-<embedder>/`   | the image crops for one embedder                           |
@@ -199,7 +203,7 @@ The log in `/tmp/retrace-test/logs/` shows the download progress and the line
 Requirements:
 
 - Rust (see `rust-version` in `Cargo.toml`) and the Xcode command line tools.
-- `cargo install tauri-cli --version "^2" --locked`.
+- `cargo install tauri-cli --version "=2.12.3" --locked` (the version CI pins).
 - cmake, git and libclang for the EmbeddingGemma build (llama.cpp).
 
 cmake must be on `PATH` and must work. If the cmake on `PATH` does not work, put a working cmake first. On the
@@ -355,11 +359,17 @@ credentials in the repository or in CI logs.
 
 **Help > Third-Party Software** opens `THIRD-PARTY.txt` with the versions, licences and source links.
 
-| Software                       | Licence            |
-| ------------------------------ | ------------------ |
-| ffmpeg (martin-riedl.de build) | GPL-3.0-or-later   |
-| yt-dlp                         | The Unlicense      |
-| D-FINE detector                | Apache-2.0         |
-| SigLIP 2 weights               | Apache-2.0         |
-| EmbeddingGemma 2 weights       | Gemma Terms of Use |
-| Tauri                          | MIT or Apache-2.0  |
+| Software                                  | Licence                                                    |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| ffmpeg (martin-riedl.de build)            | GPL-3.0-or-later                                           |
+| yt-dlp standalone binary (yt-dlp_macos)   | Source: The Unlicense. Binary: GPL-3.0-or-later (note 1)   |
+| D-FINE detector                           | Apache-2.0                                                 |
+| SigLIP 2 weights                          | Apache-2.0                                                 |
+| EmbeddingGemma 2 weights                  | Gemma Terms of Use                                         |
+| ONNX Runtime (in the app)                 | MIT                                                        |
+| usls (in the app)                         | MIT or Apache-2.0                                          |
+| llama.cpp (in the app)                    | MIT                                                        |
+| Tauri (in the app)                        | MIT or Apache-2.0                                          |
+
+Note 1: the yt-dlp source code is under The Unlicense. The PyInstaller executable contains GPL-3.0-or-later
+code, so the combined binary is GPL-3.0-or-later. See `THIRD_PARTY_LICENSES.txt` in the yt-dlp release.

@@ -117,8 +117,15 @@ pub fn plan(bin: &Path, assets: &[ToolAsset]) -> Vec<(ToolAsset, ModelFile)> {
         .collect()
 }
 
+/// `bin/.<name>.sha256`: the digest of the archive an extracted tool came from. A new pinned
+/// build (a version or digest change) then replaces the old executable.
+fn stamp_path(bin: &Path, a: &ToolAsset) -> PathBuf {
+    bin.join(format!(".{}.sha256", a.name))
+}
+
 /// True when `bin/<name>` is an executable file (and, for a raw download, has the pinned size,
-/// so a half-written file is never taken as installed). A symlink is never a pinned download:
+/// so a half-written file is never taken as installed; for a zip, its stamp names the pinned
+/// archive digest). A symlink is never a pinned download:
 /// "Use the installed tools" links `bin/` to the system tools, and after a change back to
 /// Download those links must be replaced, not used.
 pub fn is_installed(bin: &Path, a: &ToolAsset) -> bool {
@@ -133,7 +140,9 @@ pub fn is_installed(bin: &Path, a: &ToolAsset) -> bool {
         Packing::Raw => std::fs::metadata(&p)
             .map(|m| m.len() == a.size)
             .unwrap_or(false),
-        Packing::Zip { .. } => true,
+        Packing::Zip { .. } => std::fs::read_to_string(stamp_path(bin, a))
+            .map(|d| d.trim().eq_ignore_ascii_case(a.sha256))
+            .unwrap_or(false),
     }
 }
 
@@ -153,6 +162,8 @@ pub fn install(bin: &Path, a: &ToolAsset, downloaded: &Path) -> Result<PathBuf> 
             make_executable(&tmp)?;
             std::fs::rename(&tmp, &target)
                 .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+            std::fs::write(stamp_path(bin, a), a.sha256)
+                .with_context(|| format!("write {}", stamp_path(bin, a).display()))?;
             let _ = std::fs::remove_file(downloaded);
         }
     }
@@ -293,9 +304,11 @@ ffmpeg and ffprobe 9.0.2
   Source code: https://ffmpeg.org/download.html and https://git.ffmpeg.org/ffmpeg.git (tag n9.0.2)
   Build scripts: https://git.martin-riedl.de/ffmpeg/build-script
 
-yt-dlp 2026.08.19
+yt-dlp 2026.08.19, standalone binary (yt-dlp_macos / yt-dlp_linux)
   https://github.com/yt-dlp/yt-dlp
-  Licence: The Unlicense (public domain)
+  Licence: the source code is under The Unlicense. The PyInstaller executable contains
+  GPL-3.0-or-later code, so the combined binary is GPL-3.0-or-later. See
+  THIRD_PARTY_LICENSES.txt in the yt-dlp release.
 
 D-FINE object detector (deim-dfine-s), ONNX export by jamjamjon/usls
   https://github.com/Peterande/D-FINE and https://github.com/jamjamjon/assets
@@ -309,6 +322,7 @@ EmbeddingGemma 2 (only when you select it)
   Licence: Gemma Terms of Use, https://ai.google.dev/gemma/terms
 
 ONNX Runtime (in the app): MIT License
+usls (in the app): MIT License or Apache License 2.0
 llama.cpp (in the app): MIT License
 Tauri (in the app): MIT License or Apache License 2.0
 ";
@@ -327,7 +341,11 @@ pub fn write_notices(root: &Path, bin: &Path) -> Result<PathBuf> {
     std::fs::write(
         bin.join("LICENSE-yt-dlp.txt"),
         format!(
-            "yt-dlp {YT_DLP_VERSION}, https://github.com/yt-dlp/yt-dlp\nLicence: The Unlicense.\n"
+            "yt-dlp {YT_DLP_VERSION} standalone binary (yt-dlp_macos / yt-dlp_linux), \
+             https://github.com/yt-dlp/yt-dlp\n\
+             Licence: the source code is under The Unlicense. The PyInstaller executable contains \
+             GPL-3.0-or-later code, so the combined binary is GPL-3.0-or-later. \
+             See THIRD_PARTY_LICENSES.txt in the yt-dlp release.\n"
         ),
     )?;
     Ok(p)
@@ -409,6 +427,14 @@ mod tests {
         install(&bin, &assets[1], &bin.join("yt-dlp")).unwrap();
         let left = plan(&bin, &assets);
         assert!(left.is_empty(), "{left:?}");
+
+        // A new pinned ffmpeg build replaces the extracted one.
+        let bumped = ToolAsset {
+            sha256: "11",
+            ..assets[0]
+        };
+        assert!(is_installed(&bin, &assets[0]));
+        assert!(!is_installed(&bin, &bumped));
 
         // A raw tool with the wrong size is not taken as installed.
         std::fs::write(bin.join("yt-dlp"), b"123").unwrap();
