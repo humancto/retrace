@@ -149,7 +149,16 @@ fn main() {
         }
     };
     app.run(|app, event| match event {
-        RunEvent::ExitRequested { .. } | RunEvent::Exit => cleanup(app),
+        // Hold the exit until cleanup has run on its own thread (it needs the main thread free to
+        // move the window off the engine page), then `request_quit` exits for real.
+        RunEvent::ExitRequested { api, .. } => {
+            if !app.state::<Ctx>().quit_done.load(Ordering::SeqCst) {
+                api.prevent_exit();
+                request_quit(app);
+            }
+        }
+        // Last resort if the exit could not be held; a no-op after a full quit.
+        RunEvent::Exit => cleanup(app),
         #[cfg(target_os = "macos")]
         RunEvent::Opened { urls } => {
             let ctx = app.state::<Ctx>();
@@ -221,12 +230,29 @@ fn watch_signals(app: AppHandle) {
             _ = int.recv() => {},
         }
         tracing::info!("signal received, quitting");
-        let a = app.clone();
-        let _ = tauri::async_runtime::spawn_blocking(move || cleanup(&a)).await;
-        app.exit(0);
+        request_quit(&app);
     });
     #[cfg(not(unix))]
     let _ = app;
+}
+
+/// Runs `cleanup` on a new thread (once), then exits the app with code 0.
+fn request_quit(app: &AppHandle) {
+    if app.state::<Ctx>().quit_started.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let a = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("quit".into())
+        .spawn(move || {
+            cleanup(&a);
+            a.exit(0);
+        });
+    if let Err(e) = spawned {
+        tracing::error!("cannot start the quit thread: {e}; cleaning up in place");
+        cleanup(app);
+        app.exit(0);
+    }
 }
 
 /// Quit without orphans: stop ingest, wait for the threads (≤3 s) so their own teardown runs,
@@ -238,6 +264,14 @@ fn cleanup(app: &AppHandle) {
     }
     tracing::info!("quitting: stopping ingest");
     ctx.stop.store(true, Ordering::SeqCst);
+    // The engine UI keeps an EventSource (/api/live) open, and a graceful server stop waits for
+    // every connection. Leave the page so the server can stop and release its engine state.
+    // Never close the window here: closing the last window requests exit again.
+    if let Some(w) = app.get_webview_window("setup")
+        && let Ok(blank) = tauri::Url::parse("about:blank")
+    {
+        let _ = w.navigate(blank);
+    }
     let deadline = Instant::now() + Duration::from_secs(3);
     let threads = std::mem::take(&mut *ctx.threads.lock().unwrap());
     for (name, done) in threads {
@@ -247,11 +281,34 @@ fn cleanup(app: &AppHandle) {
         }
     }
     retrace::ingest::kill_children();
-    if let Some(e) = ctx.engine.lock().unwrap().as_ref() {
+    let engine = ctx.engine.lock().unwrap().take();
+    if let Some(e) = engine {
         e.shutdown.trigger();
+        release_engine(e);
     }
     kill_child_processes();
+    ctx.quit_done.store(true, Ordering::SeqCst);
     tracing::info!("quit complete");
+}
+
+/// Frees the engine (embedder, then index) before the process exits. The EmbeddingGemma embedder
+/// owns llama.cpp Metal buffers; if they are still alive when the C++ static destructors run at
+/// exit, `ggml_metal_device_free` asserts and the process aborts. The server and its open
+/// connections can still hold the state, so free the embedder through its lock first, then drop
+/// the state when (up to 1 s) this is the last holder.
+fn release_engine(e: ctx::Engine) {
+    e.state
+        .emb
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .release();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while std::sync::Arc::strong_count(&e.state) > 1 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let holders = std::sync::Arc::strong_count(&e.state);
+    tracing::info!(holders, "embedder released");
+    drop(e);
 }
 
 /// Ends every direct child of this process (ffmpeg pipes, yt-dlp) that is still running:

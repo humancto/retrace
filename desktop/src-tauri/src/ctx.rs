@@ -32,6 +32,10 @@ pub struct Ctx {
     /// One receiver per worker/live thread; it disconnects when the thread ends.
     pub threads: Mutex<Vec<(String, Receiver<()>)>>,
     pub cleaned_up: AtomicBool,
+    /// A quit is running on its own thread (see `request_quit` in main.rs).
+    pub quit_started: AtomicBool,
+    /// Cleanup has finished: the process may exit now.
+    pub quit_done: AtomicBool,
 }
 
 impl Ctx {
@@ -49,6 +53,8 @@ impl Ctx {
             stop: Arc::new(AtomicBool::new(false)),
             threads: Mutex::new(Vec::new()),
             cleaned_up: AtomicBool::new(false),
+            quit_started: AtomicBool::new(false),
+            quit_done: AtomicBool::new(false),
         }
     }
 
