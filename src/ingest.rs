@@ -1191,6 +1191,16 @@ pub fn run_live_forever(opts: IngestOpts, stop: std::sync::Arc<std::sync::atomic
 mod tests {
     use super::*;
 
+    /// Serializes the tests that touch the shared `CHILDREN` list, so one test's registered pid
+    /// is never seen (or killed) half-way through another test.
+    static CHILDREN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn children_lock() -> std::sync::MutexGuard<'static, ()> {
+        CHILDREN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// True while `pid` is a live or zombie process of ours (a reaped child is neither).
     #[cfg(unix)]
     fn process_exists(pid: u32) -> bool {
@@ -1204,6 +1214,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn group_kill_ends_the_helper_and_its_children() {
+        let _g = children_lock();
         use std::io::BufRead;
         use std::os::unix::process::CommandExt;
         // A helper that starts a child of its own and waits, as yt-dlp does.
@@ -1235,16 +1246,20 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn output_tracked_deregisters_after_the_run() {
-        let out = output_tracked(std::process::Command::new("sh").args(["-c", "echo hi"])).unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "hi");
-        let left = CHILDREN.lock().unwrap().clone();
-        // Other tests may register their own children; none of them is a finished `sh`.
-        assert!(left.iter().all(|p| process_exists(*p)), "{left:?}");
+        let _g = children_lock();
+        // `$$` is the pid of the spawned `sh` itself, so the test checks only its own entry.
+        let out = output_tracked(std::process::Command::new("sh").args(["-c", "echo $$"])).unwrap();
+        let pid: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+        assert!(
+            !CHILDREN.lock().unwrap().contains(&pid),
+            "pid {pid} still registered after the run"
+        );
     }
 
     #[test]
     #[cfg(unix)]
     fn shutdown_reaps_the_recorder_and_forgets_the_user_agent() {
+        let _g = children_lock();
         let url = "https://rr1.googlevideo.com/test-shutdown-reaps";
         remember_user_agent(url, "UA/1");
         assert_eq!(user_agent_args(url)[1], "UA/1");
