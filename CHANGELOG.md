@@ -93,8 +93,9 @@ All notable changes to Retrace are recorded here. The format follows
 - The yt-dlp notice now says that the standalone binary is GPL-3.0-or-later (its source is under
   The Unlicense). The notice also lists usls.
 - A new pinned ffmpeg build replaces an installed one (a sha256 stamp in `bin/`).
-- App Nap is off for Retrace (`LSAppNapIsDisabled`). Before, an ingest slowed from several frames
-  a second to about 0.3 when the window was behind another app.
+- App Nap is off for Retrace (`LSAppNapIsDisabled`), so macOS does not throttle an ingest when the
+  window is behind another app. The smoke runs for this release ran on a busy machine, so they do
+  not give a clean speed comparison.
 - Finder lists Retrace under **Open With** for common video types. The bundled setup pages have a
   strict CSP. The app keeps 14 days of logs. A clip download never replaces an existing file.
 
