@@ -143,6 +143,8 @@ enum Inner {
     },
     #[cfg(feature = "gemma-native")]
     Native(llama_embed::Engine),
+    /// The model was freed by [`Embedder::release`].
+    Released,
 }
 
 pub struct Embedder {
@@ -347,6 +349,14 @@ impl Embedder {
         })
     }
 
+    /// Frees the model now (its weights and any GPU buffers); every later embed call fails. A
+    /// process that loaded EmbeddingGemma natively must call this before it exits: llama.cpp's
+    /// Metal device is a C++ static, and its destructor aborts if model buffers are still alive.
+    pub fn release(&mut self) {
+        self.inner = Inner::Released;
+        self.audio = false;
+    }
+
     fn remote(&self, items: &[Item]) -> Result<Vec<Vec<f32>>> {
         let Inner::Remote { url, agent } = &self.inner else {
             anyhow::bail!("not a remote embedder")
@@ -411,6 +421,7 @@ impl Embedder {
                 let v = eng.embed(llama_embed::Input::Text(&prompt))?;
                 Ok((prompt, v))
             }
+            Inner::Released => anyhow::bail!("the embedder was released"),
         }
     }
 
@@ -438,6 +449,7 @@ impl Embedder {
                 let prompt = format!("task: search result | query: {text}");
                 eng.embed(llama_embed::Input::Text(&prompt))
             }
+            Inner::Released => anyhow::bail!("the embedder was released"),
         }
     }
 
@@ -480,6 +492,7 @@ impl Embedder {
                     )]))
                 })
                 .collect(),
+            Inner::Released => anyhow::bail!("the embedder was released"),
         }
     }
 
@@ -509,6 +522,7 @@ impl Embedder {
                     .collect();
                 eng.embed(llama_embed::Input::Images(views))
             }
+            Inner::Released => anyhow::bail!("the embedder was released"),
         }
     }
 
@@ -584,6 +598,27 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn released_embedder_fails_cleanly() {
+        let mut e = Embedder {
+            inner: Inner::Remote {
+                url: "http://127.0.0.1:9".into(),
+                agent: ureq::Agent::new_with_defaults(),
+            },
+            name: "test".into(),
+            dim: 4,
+            audio: true,
+        };
+        e.release();
+        assert!(!e.audio);
+        let err = e.embed_text("a person").unwrap_err().to_string();
+        assert!(err.contains("released"), "{err}");
+        assert!(e.embed_query("a person").is_err());
+        assert!(e.embed_images(&[]).is_err());
+        assert!(e.embed_image_set(&[]).is_err());
+        assert!(e.embed_audio_wav(&[]).is_err());
+    }
 
     #[test]
     fn resolve_prefers_models_dir_file() {
