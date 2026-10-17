@@ -4,17 +4,32 @@ use crate::ctx::{Ctx, Engine};
 use anyhow::{Context, Result};
 use retrace::api::AppState;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use tauri::{AppHandle, Manager};
 
 /// Loads the index and the embedder (blocking work on a blocking thread), serves, navigates.
 pub async fn start(app: &AppHandle) -> Result<()> {
     let ctx = app.state::<Ctx>();
-    if ctx.stop.load(Ordering::SeqCst) || ctx.engine.lock().unwrap().is_some() {
+    if ctx.stop.load(Ordering::SeqCst) {
         return Ok(());
     }
+    if ctx
+        .engine
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .is_some()
+    {
+        // The engine runs already (a Retry after a failed navigate, or setup run again for a new
+        // tool source): make sure the window shows it.
+        crate::setup::update(app, |v| v.phase = "Ready.".into());
+        return show_engine(app, ctx.port.load(Ordering::SeqCst));
+    }
     let paths = ctx.paths.clone();
-    let settings = ctx.settings.lock().unwrap().clone();
+    let settings = ctx
+        .settings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
     let embedder = settings.embedder.clone();
     let state = tauri::async_runtime::spawn_blocking(move || -> Result<AppState> {
         let db_path = paths.db_for(&settings.embedder);
@@ -44,7 +59,7 @@ pub async fn start(app: &AppHandle) -> Result<()> {
         state
             .emb
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(PoisonError::into_inner)
             .release();
         tracing::info!("quit during engine start: embedder released");
         return Ok(());
@@ -61,15 +76,27 @@ pub async fn start(app: &AppHandle) -> Result<()> {
     let url = format!("http://{addr}/");
     tracing::info!("engine listening on {url}");
     ctx.port.store(addr.port(), Ordering::SeqCst);
-    *ctx.engine.lock().unwrap() = Some(Engine {
+    *ctx.engine.lock().unwrap_or_else(PoisonError::into_inner) = Some(Engine {
         state: state.clone(),
         shutdown,
         embedder,
     });
     crate::worker::start(app, state);
     crate::setup::update(app, |v| v.phase = "Ready.".into());
+    show_engine(app, addr.port())
+}
+
+/// Moves the main window to the engine UI on `port`, unless it shows it already.
+fn show_engine(app: &AppHandle, port: u16) -> Result<()> {
+    let url = tauri::Url::parse(&format!("http://127.0.0.1:{port}/"))?;
     if let Some(w) = app.get_webview_window("setup") {
-        w.navigate(tauri::Url::parse(&url)?)?;
+        let on_engine = w
+            .url()
+            .map(|u| u.host_str() == Some("127.0.0.1") && u.port() == Some(port))
+            .unwrap_or(false);
+        if !on_engine {
+            w.navigate(url)?;
+        }
     }
     Ok(())
 }

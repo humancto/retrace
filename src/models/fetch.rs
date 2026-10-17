@@ -577,6 +577,25 @@ fn verify(file: &ModelFile, part: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Hashes every present file of `files` that has a pinned sha256 and deletes the ones that do
+/// not match, so the next [`prefetch_files`] downloads them again. [`ModelFile::is_present`]
+/// checks the size only, so a damaged file of the right size is found only here. Returns the
+/// labels of the deleted files.
+pub fn remove_damaged(files: &[ModelFile]) -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for f in files.iter().filter(|f| f.is_present()) {
+        let Some(want) = f.sha256 else { continue };
+        let got = sha256_file(&f.dest)?;
+        if !got.eq_ignore_ascii_case(want) {
+            tracing::warn!(file = %f.label, "sha256 mismatch: got {got}, expected {want}; deleting");
+            std::fs::remove_file(&f.dest)
+                .with_context(|| format!("delete {}", f.dest.display()))?;
+            removed.push(f.label.clone());
+        }
+    }
+    Ok(removed)
+}
+
 /// Lowercase hex sha256 of a file.
 pub fn sha256_file(p: &Path) -> Result<String> {
     let mut f = std::fs::File::open(p).with_context(|| format!("open {}", p.display()))?;
@@ -1022,6 +1041,31 @@ mod tests {
         } else {
             assert!(r.is_err());
         }
+    }
+
+    #[test]
+    fn damaged_files_of_the_right_size_are_deleted() {
+        let t = tempfile::tempdir().unwrap();
+        let abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let mk = |name: &str, body: &[u8], sha| {
+            let dest = t.path().join(name);
+            std::fs::write(&dest, body).unwrap();
+            ModelFile {
+                label: name.into(),
+                url: "http://127.0.0.1:9/never".into(),
+                dest,
+                size: 3,
+                sha256: sha,
+            }
+        };
+        let files = [
+            mk("good", b"abc", Some(abc)),
+            mk("bad", b"abd", Some(abc)),
+            mk("unpinned", b"xyz", None),
+        ];
+        assert_eq!(remove_damaged(&files).unwrap(), vec!["bad".to_string()]);
+        assert!(files[0].is_present() && !files[1].dest.exists() && files[2].is_present());
+        assert!(remove_damaged(&files).unwrap().is_empty());
     }
 
     #[test]

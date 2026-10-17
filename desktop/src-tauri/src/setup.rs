@@ -10,7 +10,8 @@ use anyhow::{Context, Result};
 use retrace::models::ModelFile;
 use serde::Serialize;
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::PoisonError;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -42,44 +43,126 @@ pub struct View {
     pub tools: ToolSource,
 }
 
-/// Starts setup on a background task unless it already runs.
+/// Clears `setup_running` if the setup task unwinds (a panic in `engine::start`), so Retry,
+/// the tool buttons and the quit wait are never blocked for good. The normal end disarms it and
+/// clears the flag itself.
+struct Running<'a> {
+    flag: &'a AtomicBool,
+    armed: bool,
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.flag.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Starts setup on a background task. When setup runs already, it runs once more after the
+/// current run, so a choice made during the run (a tool source) is not lost.
 pub fn start(app: &AppHandle) {
     let ctx = app.state::<Ctx>();
     if ctx.setup_running.swap(true, Ordering::SeqCst) {
+        ctx.setup_again.store(true, Ordering::SeqCst);
+        tracing::info!("setup runs already; it runs again when this run ends");
+        update(app, |v| {
+            v.phase = "Setup runs again with your choice when this step ends.".into()
+        });
         return;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let a = app.clone();
-        let res = match tauri::async_runtime::spawn_blocking(move || prepare(&a)).await {
-            Ok(r) => r,
-            Err(e) => Err(anyhow::anyhow!("setup stopped: {e}")),
-        };
-        let res = match res {
-            Ok(()) => crate::engine::start(&app).await,
-            Err(e) => Err(e),
-        };
         let ctx = app.state::<Ctx>();
-        if let Err(e) = res {
-            tracing::error!("setup failed: {e:#}");
-            update(&app, |v| {
-                v.failed = true;
-                v.error = Some(format!("{e:#}"));
-                v.phase = "Setup stopped.".into();
-                for it in v.items.iter_mut().filter(|i| i.state == "active") {
-                    it.state = "failed";
-                }
-            });
+        loop {
+            let mut running = Running {
+                flag: &ctx.setup_running,
+                armed: true,
+            };
+            run_once(&app).await;
+            running.armed = false;
+            ctx.setup_running.store(false, Ordering::SeqCst);
+            if !ctx.setup_again.swap(false, Ordering::SeqCst) || ctx.stop.load(Ordering::SeqCst) {
+                break;
+            }
+            // Another start may have begun in the gap; then that one owns the run.
+            if ctx.setup_running.swap(true, Ordering::SeqCst) {
+                break;
+            }
+            tracing::info!("running setup again with the new choice");
         }
-        ctx.setup_running.store(false, Ordering::SeqCst);
     });
+}
+
+async fn run_once(app: &AppHandle) {
+    let a = app.clone();
+    let res = match tauri::async_runtime::spawn_blocking(move || prepare(&a)).await {
+        Ok(r) => r,
+        Err(e) => Err(anyhow::anyhow!("setup stopped: {e}")),
+    };
+    let res = match res {
+        Ok(()) => match crate::engine::start(app).await {
+            Ok(()) => Ok(()),
+            Err(e) => Err(drop_damaged_models(app, e).await),
+        },
+        Err(e) => Err(e),
+    };
+    if let Err(e) = res {
+        tracing::error!("setup failed: {e:#}");
+        update(app, |v| {
+            v.failed = true;
+            v.error = Some(format!("{e:#}"));
+            v.phase = "Setup stopped.".into();
+            for it in v.items.iter_mut().filter(|i| i.state == "active") {
+                it.state = "failed";
+            }
+        });
+    }
+}
+
+/// After the engine did not start: a model file with the right size but damaged bytes counts as
+/// present, so Retry would fail the same way again. Check every pinned digest, delete the files
+/// that do not match, and say so in the error.
+async fn drop_damaged_models(app: &AppHandle, e: anyhow::Error) -> anyhow::Error {
+    let ctx = app.state::<Ctx>();
+    let settings = ctx
+        .settings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    let models = settings.models(&ctx.paths.models);
+    phase(app, "Checking the model files.");
+    let checked = tauri::async_runtime::spawn_blocking(move || {
+        let plan = retrace::models::fetch::plan(&models)?;
+        retrace::models::fetch::remove_damaged(&plan)
+    })
+    .await;
+    match checked {
+        Ok(Ok(removed)) if !removed.is_empty() => {
+            tracing::warn!(?removed, "damaged model files deleted");
+            e.context(format!(
+                "{} model file(s) were damaged and are deleted ({}). Select Try again to download them again",
+                removed.len(),
+                removed.join(", ")
+            ))
+        }
+        Ok(Ok(_)) => e,
+        Ok(Err(c)) => {
+            tracing::warn!("cannot check the model files: {c:#}");
+            e
+        }
+        Err(j) => {
+            tracing::warn!("model check stopped: {j}");
+            e
+        }
+    }
 }
 
 /// Changes the view and sends it to the page.
 pub fn update(app: &AppHandle, f: impl FnOnce(&mut View)) {
     let ctx = app.state::<Ctx>();
     let snapshot = {
-        let mut v = ctx.setup.lock().unwrap();
+        let mut v = ctx.setup.lock().unwrap_or_else(PoisonError::into_inner);
         f(&mut v);
         v.clone()
     };
@@ -95,7 +178,11 @@ fn phase(app: &AppHandle, text: &str) {
 fn prepare(app: &AppHandle) -> Result<()> {
     let ctx = app.state::<Ctx>();
     let paths = ctx.paths.clone();
-    let mut settings = ctx.settings.lock().unwrap().clone();
+    let mut settings = ctx
+        .settings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
     paths.create()?;
     tools::write_notices(&paths.root, &paths.bin)?;
 
@@ -131,7 +218,7 @@ fn prepare(app: &AppHandle) -> Result<()> {
                 // ("Use the installed tools" saves the choice itself).
                 settings.system_tools = Some(st);
                 let _ = settings.save(&paths.settings);
-                *ctx.settings.lock().unwrap() = settings.clone();
+                *ctx.settings.lock().unwrap_or_else(PoisonError::into_inner) = settings.clone();
             }
             vec![]
         }

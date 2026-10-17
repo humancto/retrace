@@ -29,6 +29,9 @@ pub struct Ctx {
     pub settings: Mutex<Settings>,
     pub setup: Mutex<View>,
     pub setup_running: AtomicBool,
+    /// A new choice came while setup ran (e.g. "Use the installed tools"): run setup once more
+    /// when the current run ends.
+    pub setup_again: AtomicBool,
     pub engine: Mutex<Option<Engine>>,
     /// The engine port for the navigation filter (0 until the engine is bound).
     pub port: Arc<AtomicU16>,
@@ -56,6 +59,7 @@ impl Ctx {
             settings: Mutex::new(settings),
             setup: Mutex::new(View::default()),
             setup_running: AtomicBool::new(false),
+            setup_again: AtomicBool::new(false),
             engine: Mutex::new(None),
             port: Arc::new(AtomicU16::new(0)),
             queue_tx,

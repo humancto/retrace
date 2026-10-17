@@ -52,7 +52,12 @@ pub fn cam_name(p: &Path) -> String {
 /// Starts the file worker (once). Files queued before this point are processed now.
 pub fn start(app: &AppHandle, state: Arc<AppState>) {
     let ctx = app.state::<Ctx>();
-    let Some(rx) = ctx.queue_rx.lock().unwrap().take() else {
+    let Some(rx) = ctx
+        .queue_rx
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+    else {
         return;
     };
     let done = ctx.track_thread("ingest-worker");
@@ -86,11 +91,20 @@ fn set_title(app: &AppHandle, title: &str) {
 
 fn index_file(app: &AppHandle, ctx: &Ctx, state: &AppState, job: &Job) {
     let path = job.path.as_path();
-    let embedder = match ctx.engine.lock().unwrap().as_ref() {
+    let embedder = match ctx
+        .engine
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+    {
         Some(e) => e.embedder.clone(),
         None => return,
     };
-    let settings = ctx.settings.lock().unwrap().clone();
+    let settings = ctx
+        .settings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     let src = path.to_string_lossy().into_owned();
     let file = path
         .file_name()

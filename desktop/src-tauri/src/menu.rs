@@ -91,7 +91,12 @@ pub fn handle(app: &AppHandle, event: MenuEvent) {
 
 fn open_video(app: &AppHandle) {
     let ctx = app.state::<Ctx>();
-    let last = ctx.settings.lock().unwrap().last_dir.clone();
+    let last = ctx
+        .settings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .last_dir
+        .clone();
     let mut dlg = app.dialog().file().add_filter("Video", VIDEO_EXT);
     if let Some(d) = last.filter(|d| d.is_dir()) {
         dlg = dlg.set_directory(d);
@@ -104,7 +109,10 @@ fn open_video(app: &AppHandle) {
         };
         let ctx = app.state::<Ctx>();
         {
-            let mut s = ctx.settings.lock().unwrap();
+            let mut s = ctx
+                .settings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             s.last_dir = path.parent().map(|p| p.to_path_buf());
             let _ = s.save(&ctx.paths.settings);
         }
