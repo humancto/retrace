@@ -53,7 +53,8 @@ All notable changes to Retrace are recorded here. The format follows
   with EmbeddingGemma 2.
 - The model downloads for the flat `--models-dir` layout are in `src/models/fetch.rs`.
 - With tracklets in the index and no query, the UI tells how many tracklets and cameras are
-  indexed, not "No index yet". In the desktop app it also tells you how to open a video.
+  indexed, not "No index yet". With an empty index, the desktop app tells you how to add a
+  video (Cmd+O, or drop the file on the window).
 
 ### Known limitations
 - The builds have an ad-hoc signature only. Apple does not notarize them. On macOS 14, right-click
