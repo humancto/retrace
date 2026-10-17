@@ -18,7 +18,33 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+/// The error a download returns when its stop flag is set. The `.part` file is kept, so the next
+/// run resumes from it. Find it with [`is_cancelled`].
+#[derive(Debug)]
+pub struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("download cancelled")
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
+/// True when `e` (or an error it wraps) is [`Cancelled`].
+pub fn is_cancelled(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<Cancelled>().is_some()
+}
+
+fn check_stop(stop: Option<&AtomicBool>) -> Result<()> {
+    if stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
+        return Err(Cancelled.into());
+    }
+    Ok(())
+}
 
 const HF: &str = "https://huggingface.co";
 
@@ -326,6 +352,16 @@ pub fn prefetch(s: &ModelSettings, progress: impl FnMut(&Progress)) -> Result<Ve
 /// [`prefetch`] for an explicit file list.
 pub fn prefetch_files(
     files: &[ModelFile],
+    progress: impl FnMut(&Progress),
+) -> Result<Vec<PathBuf>> {
+    prefetch_files_until(files, None, progress)
+}
+
+/// [`prefetch_files`] that stops with [`Cancelled`] soon after `stop` is set: between files and
+/// between reads of a transfer. A partial file stays as `.part` for the next run.
+pub fn prefetch_files_until(
+    files: &[ModelFile],
+    stop: Option<&AtomicBool>,
     mut progress: impl FnMut(&Progress),
 ) -> Result<Vec<PathBuf>> {
     let agent = agent();
@@ -345,9 +381,10 @@ pub fn prefetch_files(
         if file.is_present() {
             report(file.size);
         } else {
+            check_stop(stop)?;
             tracing::info!(file = %file.label, bytes = file.size, "downloading {}", file.url);
             report(0);
-            download(&agent, file, &mut report)
+            download_until(&agent, file, stop, &mut report)
                 .with_context(|| format!("download {} ({})", file.label, file.url))?;
             report(file.size);
         }
@@ -388,6 +425,16 @@ pub fn download(
     file: &ModelFile,
     on_bytes: &mut dyn FnMut(u64),
 ) -> Result<()> {
+    download_until(agent, file, None, on_bytes)
+}
+
+/// [`download`] that stops with [`Cancelled`] when `stop` is set, keeping the `.part` file.
+pub fn download_until(
+    agent: &ureq::Agent,
+    file: &ModelFile,
+    stop: Option<&AtomicBool>,
+    on_bytes: &mut dyn FnMut(u64),
+) -> Result<()> {
     let part = file.part_path();
     if let Some(dir) = file.dest.parent() {
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
@@ -397,7 +444,7 @@ pub fn download(
         if attempt > 0 {
             let _ = std::fs::remove_file(&part);
         }
-        transfer(agent, file, &part, on_bytes)?;
+        transfer(agent, file, &part, stop, on_bytes)?;
         match verify(file, &part) {
             Ok(()) => {
                 std::fs::rename(&part, &file.dest).with_context(|| {
@@ -423,12 +470,14 @@ fn transfer(
     agent: &ureq::Agent,
     file: &ModelFile,
     part: &Path,
+    stop: Option<&AtomicBool>,
     on_bytes: &mut dyn FnMut(u64),
 ) -> Result<()> {
     let mut idle = 0;
     loop {
+        check_stop(stop)?;
         let before = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
-        let round = transfer_round(agent, file, part, on_bytes)?;
+        let round = transfer_round(agent, file, part, stop, on_bytes)?;
         let after = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
         match round {
             Round::Complete => return Ok(()),
@@ -466,6 +515,7 @@ fn transfer_round(
     agent: &ureq::Agent,
     file: &ModelFile,
     part: &Path,
+    stop: Option<&AtomicBool>,
     on_bytes: &mut dyn FnMut(u64),
 ) -> Result<Round> {
     let mut have = std::fs::metadata(part).map(|m| m.len()).unwrap_or(0);
@@ -519,6 +569,11 @@ fn transfer_round(
     let mut buf = vec![0u8; 256 * 1024];
     let mut ended = None;
     loop {
+        if stop.is_some_and(|s| s.load(Ordering::Relaxed)) {
+            // Keep what arrived: the next run resumes from it.
+            out.sync_all()?;
+            return Err(Cancelled.into());
+        }
         let n = match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => n,
@@ -913,6 +968,39 @@ mod tests {
             good.ranges.lock().unwrap().as_slice(),
             &[Some(format!("bytes={kept}-"))]
         );
+    }
+
+    #[test]
+    fn stop_flag_cancels_and_keeps_part() {
+        let data = body();
+        // The first request sends half the body and then stalls, so the stop is seen mid-transfer.
+        let srv = serve(data.clone(), Mode::StallFirst);
+        let t = tempfile::tempdir().unwrap();
+        let f = file_for(t.path(), &srv.url, &data, true);
+        let stop = AtomicBool::new(false);
+        let err = download_until(&agent(), &f, Some(&stop), &mut |n| {
+            if n > 0 {
+                stop.store(true, Ordering::Relaxed);
+            }
+        })
+        .unwrap_err();
+        assert!(is_cancelled(&err), "{err:#}");
+        assert!(!f.dest.exists());
+        let kept = std::fs::metadata(f.part_path()).unwrap().len();
+        assert!(kept > 0 && kept < f.size, "partial bytes are kept: {kept}");
+    }
+
+    #[test]
+    fn stop_flag_set_before_start_fetches_nothing() {
+        let data = body();
+        let srv = serve(data.clone(), Mode::Ranges);
+        let t = tempfile::tempdir().unwrap();
+        let f = file_for(t.path(), &srv.url, &data, true);
+        let stop = AtomicBool::new(true);
+        let err = prefetch_files_until(std::slice::from_ref(&f), Some(&stop), |_| {}).unwrap_err();
+        assert!(is_cancelled(&err), "{err:#}");
+        assert!(srv.ranges.lock().unwrap().is_empty(), "no request is sent");
+        assert!(!f.dest.exists());
     }
 
     #[test]
