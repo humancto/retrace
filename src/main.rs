@@ -1,19 +1,8 @@
-//! Retrace: a fully local physical-AI video investigator.
-//! ingest → tracklets → crop embeddings → SQLite (sqlite-vec + FTS5) → search / rules / UI.
-
-mod annotate;
-mod api;
-mod audio;
-mod db;
-mod ingest;
-mod models;
-mod overlay;
-mod rules;
-mod search;
-mod track;
+//! The `retrace` command line: a thin wrapper over the `retrace` library.
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
+use retrace::{annotate, api, db, ingest, models, overlay, search};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
