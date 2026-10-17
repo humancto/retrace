@@ -14,6 +14,9 @@ use usls::{
     models::{Clip, DEIM},
 };
 
+pub mod fetch;
+pub use fetch::{ModelFile, Progress, prefetch};
+
 pub const COCO_PERSON_VEHICLE: &[usize] = &[0, 1, 2, 3, 5, 7]; // person, bicycle, car, motorcycle, bus, truck
 
 #[derive(Debug, Clone)]
@@ -576,4 +579,66 @@ pub fn cosine(a: &[f32], b: &[f32]) -> f64 {
         .zip(b)
         .map(|(x, y)| (*x as f64) * (*y as f64))
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_prefers_models_dir_file() {
+        let t = tempfile::tempdir().unwrap();
+        let d = Some(t.path().to_path_buf());
+        let remote = format!("{GH}/deim/dfine-s-coco.onnx");
+        // Missing local file: the remote spec passes through to usls.
+        assert_eq!(resolve(&d, "deim/dfine-s-coco.onnx", &remote), remote);
+        std::fs::create_dir_all(t.path().join("deim")).unwrap();
+        std::fs::write(t.path().join("deim/dfine-s-coco.onnx"), b"x").unwrap();
+        assert_eq!(
+            resolve(&d, "deim/dfine-s-coco.onnx", &remote),
+            t.path().join("deim/dfine-s-coco.onnx").to_string_lossy()
+        );
+        assert_eq!(resolve(&None, "deim/dfine-s-coco.onnx", &remote), remote);
+    }
+
+    #[test]
+    fn siglip_local_uses_models_dir_once_vision_exists() {
+        let t = tempfile::tempdir().unwrap();
+        let d = Some(t.path().to_path_buf());
+        let base = t.path().join("siglip2-b16-256");
+        let vision = base
+            .join("vision_model.onnx")
+            .to_string_lossy()
+            .into_owned();
+        let cfg = format!(
+            "{:?}",
+            siglip_local(Config::siglip2_b16_256(), &d, "siglip2-b16-256")
+        );
+        assert!(!cfg.contains(&vision), "no local copy yet");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("vision_model.onnx"), b"x").unwrap();
+        let cfg = format!(
+            "{:?}",
+            siglip_local(Config::siglip2_b16_256(), &d, "siglip2-b16-256")
+        );
+        assert!(cfg.contains(&vision), "{cfg}");
+        assert!(cfg.contains(&*base.join("text_model.onnx").to_string_lossy()));
+    }
+
+    #[cfg(feature = "gemma-native")]
+    #[test]
+    fn load_native_reads_models_dir() {
+        let t = tempfile::tempdir().unwrap();
+        let s = ModelSettings {
+            models_dir: Some(t.path().to_path_buf()),
+            embedder: "gemma2-native:256".into(),
+            ..ModelSettings::default()
+        };
+        let err = Embedder::load(&s).err().expect("no gguf files");
+        let want = t.path().join("embeddinggemma-2");
+        assert!(
+            format!("{err:#}").contains(&*want.to_string_lossy()),
+            "{err:#}"
+        );
+    }
 }

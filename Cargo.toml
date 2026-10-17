@@ -40,6 +40,9 @@ ureq = { version = "3", features = ["json"] }
 llama-embed = { path = "crates/llama-embed", optional = true }
 tempfile = "3"
 percent-encoding = "2"
+# Model prefetch: checksums and the usls cache root.
+sha2 = "0.10"
+dirs = "6"
 
 # usls wraps onnxruntime (via `ort`) with pre/post-processing for DEIM/D-FINE/RT-DETR/RF-DETR
 # detectors, CLIP/SigLIP 2 embeddings and ByteTrack. Pinned to a commit; it pins ort =2.0.0-rc.13.
