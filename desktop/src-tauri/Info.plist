@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Indexing runs on background threads. With App Nap, macOS throttles the app as soon as its
+	     window is hidden or behind another app, and an ingest drops from several frames a second
+	     to about 0.3. -->
+	<key>LSAppNapIsDisabled</key>
+	<true/>
+</dict>
+</plist>

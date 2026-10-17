@@ -24,6 +24,7 @@ All notable changes to Retrace are recorded here. The format follows
   quit. Today the app waits 3 s for each thread and then exits with `_exit`, so the process does
   not abort, but the ingest does not finish its last batch.
 - Pin the third-party GitHub Actions in `desktop.yml` to commit SHAs.
+- Keep App Nap on while the app is idle, and hold a macOS activity only while an ingest runs.
 - Check the clip download (`download=` links) in the built app with a real click, and record a
   relaunch with the network off. Today a person must do these two checks (see the PR test plan).
 
@@ -92,6 +93,8 @@ All notable changes to Retrace are recorded here. The format follows
 - The yt-dlp notice now says that the standalone binary is GPL-3.0-or-later (its source is under
   The Unlicense). The notice also lists usls.
 - A new pinned ffmpeg build replaces an installed one (a sha256 stamp in `bin/`).
+- App Nap is off for Retrace (`LSAppNapIsDisabled`). Before, an ingest slowed from several frames
+  a second to about 0.3 when the window was behind another app.
 - Finder lists Retrace under **Open With** for common video types. The bundled setup pages have a
   strict CSP. The app keeps 14 days of logs. A clip download never replaces an existing file.
 
