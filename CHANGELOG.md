@@ -30,6 +30,14 @@ All notable changes to Retrace are recorded here. The format follows
 - Keep App Nap on while the app is idle, and hold a macOS activity only while an ingest runs.
 - Check the clip download (`download=` links) in the built app with a real click, and record a
   relaunch with the network off. Today a person must do these two checks (see the PR test plan).
+- Ship a full licence file for the statically linked code (ONNX Runtime, llama.cpp, Tauri and the
+  MIT/Apache crates, with their copyright and permission text) as a bundle resource, generated at
+  build time with `cargo about`, and point Help > Third-Party Software at it. Today
+  `THIRD-PARTY.txt` names each licence only.
+- Install `tauri-cli` in CI from a prebuilt binary (`cargo-binstall` or `taiki-e/install-action`)
+  instead of a source build on each leg.
+- A download that stalls without sending bytes still holds a quit for up to the 10 s setup budget,
+  because the stop flag is checked between reads.
 
 ## [0.5.0] — 2026-10-17
 
@@ -65,7 +73,9 @@ All notable changes to Retrace are recorded here. The format follows
 - A tools resolver (`src/tools.rs`) finds ffmpeg, ffprobe and yt-dlp in this order: the app tools
   folder, the folder of the executable, `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`. Each call to
   these tools goes through it. For the CLI, the new parts are the folder of the executable before
-  `PATH` and the two Homebrew folders after it. In the desktop app, yt-dlp also gets
+  `PATH` and the two Homebrew folders after it: an ffmpeg, ffprobe or yt-dlp next to the `retrace`
+  binary now wins over the one on `PATH` (the frame pipe already worked this way through
+  ffmpeg-sidecar). In the desktop app, yt-dlp also gets
   `--ffmpeg-location`; the CLI does not add it.
 - `serve` logs the address it bound, not the address string it was given.
 - `api::bind` binds the port first and returns a handle that stops the server cleanly. `serve`
@@ -101,6 +111,15 @@ All notable changes to Retrace are recorded here. The format follows
   not give a clean speed comparison.
 - Finder lists Retrace under **Open With** for common video types. The bundled setup pages have a
   strict CSP. The app keeps 14 days of logs. A clip download never replaces an existing file.
+- A quit during the first-run download stops the download within one read and keeps the partial
+  file, so the next start resumes it. Setup shows no error for a quit.
+- An error in the audio loop now ends, reaps and deregisters the audio ffmpeg, so a later stop
+  never signals a pid that the system has given to another process.
+- Linux: the app opens a video given as a bare argument (`Retrace video.mp4`, a file association,
+  or a second launch), and the `.desktop` file passes the files (`%F`) and lists the video types.
+- Closing the main window quits the app, also while the Add Camera window is open.
+- Recording the installed tool paths no longer overwrites a settings change made while setup runs.
+- The bundle copyright line names the copyright holder.
 
 ### Known limitations
 - The builds have an ad-hoc signature only. Apple does not notarize them. On macOS 14, right-click
