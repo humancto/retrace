@@ -253,7 +253,9 @@ request that changes `desktop/`, `src/`, `crates/`, `ui/`, `Cargo.toml` or `Carg
 
 Each job runs `cargo fmt --check`, the desktop clippy command above, `cargo test -p retrace-desktop` and
 `cargo tauri build`. It uploads the bundles as the artifact `retrace-desktop-<OS>`. The macOS job also uploads
-`Retrace_macos_aarch64.app.zip`. On a `v*` tag, each job attaches its bundles to the GitHub release of that tag.
+`Retrace_macos_aarch64.app.zip`. On a `v*` tag, a separate `release` job downloads the artifacts of both jobs
+and attaches them to the GitHub release of that tag. Only that job gets a token that can write to the
+repository; the other jobs have read access only.
 
 The other CI jobs build only the root crate, so they do not compile llama.cpp.
 
