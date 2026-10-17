@@ -24,6 +24,9 @@ All notable changes to Retrace are recorded here. The format follows
   quit. Today the app waits 3 s for each thread and then exits with `_exit`, so the process does
   not abort, but the ingest does not finish its last batch.
 - Pin the third-party GitHub Actions in `desktop.yml` to commit SHAs.
+- Downloads from a server that ignores Range requests: each 120 s request starts again from byte 0,
+  so a large file on such a server needs about 9 MB/s or more. The pinned hosts (Hugging Face,
+  GitHub, martin-riedl.de) support Range, so this applies only if a mirror is added.
 - Keep App Nap on while the app is idle, and hold a macOS activity only while an ingest runs.
 - Check the clip download (`download=` links) in the built app with a real click, and record a
   relaunch with the network off. Today a person must do these two checks (see the PR test plan).
