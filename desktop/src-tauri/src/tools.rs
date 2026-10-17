@@ -118,10 +118,15 @@ pub fn plan(bin: &Path, assets: &[ToolAsset]) -> Vec<(ToolAsset, ModelFile)> {
 }
 
 /// True when `bin/<name>` is an executable file (and, for a raw download, has the pinned size,
-/// so a half-written file is never taken as installed).
+/// so a half-written file is never taken as installed). A symlink is never a pinned download:
+/// "Use the installed tools" links `bin/` to the system tools, and after a change back to
+/// Download those links must be replaced, not used.
 pub fn is_installed(bin: &Path, a: &ToolAsset) -> bool {
     let p = bin.join(a.name);
-    if !is_executable(&p) {
+    let is_link = std::fs::symlink_metadata(&p)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    if is_link || !is_executable(&p) {
         return false;
     }
     match a.packing {
@@ -443,6 +448,27 @@ mod tests {
         );
         let r = retrace::tools::resolve_in("ffprobe", Some(&bin), None, None, &[]);
         assert_eq!(r, bin.join("ffprobe"));
+
+        // Back to Download: the links are not the pinned builds, so they are fetched again,
+        // and installing replaces the link (not the system tool it points to).
+        let ffmpeg = ToolAsset {
+            name: "ffmpeg",
+            url: "https://example.invalid/ffmpeg.zip",
+            size: 1,
+            sha256: "00",
+            packing: Packing::Zip { member: "ffmpeg" },
+        };
+        assert!(!is_installed(&bin, &ffmpeg));
+        assert_eq!(plan(&bin, &[ffmpeg]).len(), 1);
+        let z = t.path().join("ffmpeg.zip");
+        zip_with(&z, "ffmpeg", b"#!/bin/sh\necho pinned\n");
+        install(&bin, &ffmpeg, &z).unwrap();
+        assert!(is_installed(&bin, &ffmpeg));
+        assert_eq!(
+            std::fs::read(sys.join("ffmpeg")).unwrap(),
+            b"#!/bin/sh\n",
+            "the system tool is untouched"
+        );
     }
 
     #[test]

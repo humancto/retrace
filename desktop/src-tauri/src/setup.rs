@@ -126,8 +126,10 @@ fn prepare(app: &AppHandle) -> Result<()> {
             tools::link_system(&paths.bin, &st)?;
             tracing::info!(?st, "using the installed tools");
             if settings.system_tools.as_ref() != Some(&st) {
+                // Record the paths only. `settings.tools` keeps the stored choice: with
+                // RETRACE_SETUP=system the mode is an override for this run, not a new default
+                // ("Use the installed tools" saves the choice itself).
                 settings.system_tools = Some(st);
-                settings.tools = ToolSource::System;
                 let _ = settings.save(&paths.settings);
                 *ctx.settings.lock().unwrap() = settings.clone();
             }
