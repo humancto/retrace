@@ -68,7 +68,7 @@ pub fn start(app: &AppHandle, state: Arc<AppState>) {
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                     Err(_) => break,
                 };
-                index_file(&ctx, &state, &path);
+                index_file(&app, &ctx, &state, &path);
             }
             tracing::info!("ingest worker stopped");
         });
@@ -77,17 +77,30 @@ pub fn start(app: &AppHandle, state: Arc<AppState>) {
     }
 }
 
-fn index_file(ctx: &Ctx, state: &AppState, path: &Path) {
+/// The main window title: the only progress the window shows while a file is indexed.
+fn set_title(app: &AppHandle, title: &str) {
+    if let Some(w) = app.get_webview_window("setup") {
+        let _ = w.set_title(title);
+    }
+}
+
+fn index_file(app: &AppHandle, ctx: &Ctx, state: &AppState, path: &Path) {
     let embedder = match ctx.engine.lock().unwrap().as_ref() {
         Some(e) => e.embedder.clone(),
         None => return,
     };
     let settings = ctx.settings.lock().unwrap().clone();
     let src = path.to_string_lossy().into_owned();
+    let file = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| src.clone());
+    set_title(app, &format!("Indexing {file}\u{2026}"));
     let source = match ingest::prepare_source(&src, &ctx.paths.cache) {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("cannot open {src}: {e:#}");
+            set_title(app, &format!("Retrace \u{2014} cannot open {file}"));
             return;
         }
     };
@@ -101,14 +114,40 @@ fn index_file(ctx: &Ctx, state: &AppState, path: &Path) {
         state,
     );
     tracing::info!(cam = %o.cam, "indexing {src}");
-    match ingest::run_ingest(&o, Some(ctx.stop.clone())) {
-        Ok(stats) => tracing::info!(
-            cam = %o.cam,
-            tracklets = stats.tracklets,
-            frames = stats.frames,
-            "indexed {src}"
-        ),
-        Err(e) => tracing::error!("indexing {src} failed: {e:#}"),
+    let result = ingest::run_ingest(&o, Some(ctx.stop.clone()));
+    // A quit stops the ingest early and it still returns Ok: only the flag tells the two apart.
+    if ctx.stop.load(Ordering::SeqCst) {
+        match result {
+            Ok(stats) => tracing::warn!(
+                cam = %o.cam,
+                tracklets = stats.tracklets,
+                frames = stats.frames,
+                "indexing {src} stopped before the end (quit); the file is not done"
+            ),
+            Err(e) => tracing::warn!("indexing {src} stopped before the end (quit): {e:#}"),
+        }
+        return;
+    }
+    match result {
+        Ok(stats) => {
+            tracing::info!(
+                cam = %o.cam,
+                tracklets = stats.tracklets,
+                frames = stats.frames,
+                "indexed {src}"
+            );
+            set_title(
+                app,
+                &format!(
+                    "Retrace \u{2014} {} tracklets indexed from {file}",
+                    stats.tracklets
+                ),
+            );
+        }
+        Err(e) => {
+            tracing::error!("indexing {src} failed: {e:#}");
+            set_title(app, &format!("Retrace \u{2014} indexing {file} failed"));
+        }
     }
 }
 
