@@ -147,7 +147,9 @@ pub fn run_audio(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit());
+    crate::ingest::isolate(&mut c);
     let mut child = c.spawn().context("spawn ffmpeg (audio)")?;
+    crate::ingest::register_child(child.id());
     if let Ok(mut p) = pid.lock() {
         *p = Some(child.id());
     }
@@ -227,6 +229,7 @@ pub fn run_audio(
     if let Ok(mut p) = pid.lock() {
         *p = None;
     }
+    crate::ingest::unregister_child(child.id());
     let _ = child.kill();
     let _ = child.wait();
     tracing::info!(cam = %opts.cam, windows = stored, "audio windows done");

@@ -573,8 +573,8 @@ async fn clip(State(st): S, Query(q): Query<ClipQ>) -> Response {
         let secs = dur as f64 / 1000.0;
         let path = src.path.clone();
         let out = tokio::task::spawn_blocking(move || {
-            std::process::Command::new(crate::tools::ffmpeg())
-                .args([
+            crate::ingest::output_tracked(std::process::Command::new(crate::tools::ffmpeg()).args(
+                [
                     "-hide_banner",
                     "-loglevel",
                     "error",
@@ -604,8 +604,8 @@ async fn clip(State(st): S, Query(q): Query<ClipQ>) -> Response {
                     "-f",
                     "mp4",
                     "-",
-                ])
-                .output()
+                ],
+            ))
         })
         .await;
         return match out {
@@ -689,45 +689,46 @@ async fn clip(State(st): S, Query(q): Query<ClipQ>) -> Response {
             if written.is_ok() {
                 let tmp2 = tmp.clone();
                 let out = tokio::task::spawn_blocking(move || {
-                    let o = std::process::Command::new(crate::tools::ffmpeg())
-                        .args([
-                            "-hide_banner",
-                            "-loglevel",
-                            "error",
-                            "-nostdin",
-                            "-f",
-                            "concat",
-                            "-safe",
-                            "0",
-                            "-i",
-                        ])
-                        .arg(&tmp2)
-                        .args([
-                            "-ss",
-                            &format!("{offset:.3}"),
-                            "-t",
-                            &format!("{secs:.3}"),
-                            "-c:a",
-                            "aac",
-                            "-b:a",
-                            "64k",
-                            "-vf",
-                            "scale='min(960,iw)':-2",
-                            "-c:v",
-                            "libx264",
-                            "-preset",
-                            "veryfast",
-                            "-crf",
-                            "23",
-                            "-pix_fmt",
-                            "yuv420p",
-                            "-movflags",
-                            "+frag_keyframe+empty_moov+default_base_moof",
-                            "-f",
-                            "mp4",
-                            "-",
-                        ])
-                        .output();
+                    let o = crate::ingest::output_tracked(
+                        std::process::Command::new(crate::tools::ffmpeg())
+                            .args([
+                                "-hide_banner",
+                                "-loglevel",
+                                "error",
+                                "-nostdin",
+                                "-f",
+                                "concat",
+                                "-safe",
+                                "0",
+                                "-i",
+                            ])
+                            .arg(&tmp2)
+                            .args([
+                                "-ss",
+                                &format!("{offset:.3}"),
+                                "-t",
+                                &format!("{secs:.3}"),
+                                "-c:a",
+                                "aac",
+                                "-b:a",
+                                "64k",
+                                "-vf",
+                                "scale='min(960,iw)':-2",
+                                "-c:v",
+                                "libx264",
+                                "-preset",
+                                "veryfast",
+                                "-crf",
+                                "23",
+                                "-pix_fmt",
+                                "yuv420p",
+                                "-movflags",
+                                "+frag_keyframe+empty_moov+default_base_moof",
+                                "-f",
+                                "mp4",
+                                "-",
+                            ]),
+                    );
                     let _ = std::fs::remove_file(&tmp2);
                     o
                 })
