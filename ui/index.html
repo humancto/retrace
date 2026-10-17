@@ -267,7 +267,9 @@ async function loadStats(){
   const live=cams.some(c=>c.kind==='live'); $('#s-live').style.display=live?'':'none';
   const sel=$('#cam');const cur=sel.value;sel.innerHTML='<option value="">all cameras</option>'+cams.map(c=>`<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');sel.value=cur;
   await drawLanes();
-  if(!lastHits.length&&!$('#grid').children.length) renderEmpty();
+  // Redraw the empty state too (its text follows the counts), but never replace results.
+  const g=$('#grid');
+  if(!lastHits.length&&(!g.children.length||g.querySelector(':scope > .empty.idle'))) renderEmpty();
 }
 function renderChips(){
   const hist=load('retrace.history',[]);
@@ -322,8 +324,14 @@ function renderAudio(hits){
 }
 function renderEmpty(){
   const g=$('#grid');
-  if(!stats.tracklets){g.innerHTML=`<div class="empty">No index yet. Run <code>retrace ingest --source video.mp4 --cam name</code>, then ask a question.</div>`;return;}
-  g.innerHTML=`<div class="empty">${stats.tracklets} tracklets indexed. Ask a question, or drag on the timeline to select a time.</div>`;
+  if(!stats.tracklets){
+    g.innerHTML=stats.desktop
+      ?`<div class="empty idle">No video indexed yet. Press <code>${/Mac/.test(navigator.platform)?'Cmd+O':'Ctrl+O'}</code> or drop a video file on this window to add it.</div>`
+      :`<div class="empty idle">No index yet. Run <code>retrace ingest --source video.mp4 --cam name</code>, then ask a question.</div>`;
+    return;
+  }
+  const n=cams.length;
+  g.innerHTML=`<div class="empty idle">${stats.tracklets} tracklets from ${n} camera${n===1?'':'s'} are indexed. Ask a question, or drag on the timeline to select a time.</div>`;
 }
 function renderGrid(hits){
   const g=$('#grid');

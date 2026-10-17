@@ -33,6 +33,7 @@ pub async fn start(app: &AppHandle) -> Result<()> {
             mediamtx: None,
             started: std::time::Instant::now(),
             live: retrace::overlay::LiveFrames::default(),
+            desktop: true,
         })
     })
     .await

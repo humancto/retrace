@@ -31,6 +31,8 @@ pub struct AppState {
     pub started: std::time::Instant,
     /// Latest annotated frame per camera (filled by in-process ingest threads).
     pub live: LiveFrames,
+    /// True when the desktop app serves the engine (the UI then shows desktop hints, not CLI ones).
+    pub desktop: bool,
 }
 
 type S = State<Arc<AppState>>;
@@ -169,6 +171,7 @@ async fn stats(State(st): S) -> Response {
         Ok(mut v) => {
             v["uptime_s"] = serde_json::json!(st.started.elapsed().as_secs());
             v["mediamtx"] = serde_json::json!(st.mediamtx);
+            v["desktop"] = serde_json::json!(st.desktop);
             Json(v).into_response()
         }
         Err(e) => err(e),

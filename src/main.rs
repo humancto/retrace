@@ -301,6 +301,7 @@ fn main() -> Result<()> {
                 mediamtx,
                 started: std::time::Instant::now(),
                 live: live.clone(),
+                desktop: false,
             });
             let stop = Arc::new(AtomicBool::new(false));
             for s in sources {
